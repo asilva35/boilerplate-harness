@@ -1,0 +1,30 @@
+// Equivalent to Go's Tool interface (internal/tool/registry.go):
+//
+//   type Tool interface {
+//       Definition() api.ToolDef
+//       Execute(ctx context.Context, input string) (result string, isError bool)
+//   }
+//
+// In Go, Definition() builds the JSON Schema by hand. Here we use a Zod
+// schema as the source of truth: it serves to (a) validate the raw input
+// the model sends before executing anything, and (b) derive the JSON
+// Schema sent to the provider (see registry.ts → zodToJsonSchema).
+//
+// "Errors as results, not exceptions": if something fails, a tool returns
+// { isError: true } so the model can read it and retry, instead of taking
+// down the loop — same criterion AGENTS.md documents for the Go project
+// ("Errors as tool results, not Go errors").
+
+import type { ZodType } from "zod";
+
+export interface ToolResult {
+  result: string;
+  isError: boolean;
+}
+
+export interface Tool<TInput = any> {
+  name: string;
+  description: string;
+  schema: ZodType<TInput>;
+  execute(input: TInput): Promise<ToolResult> | ToolResult;
+}

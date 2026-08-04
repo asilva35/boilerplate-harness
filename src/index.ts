@@ -1,18 +1,32 @@
-// Phase 1: minimal REPL, no tools yet. Equivalent to the console session
-// startup in main.go, without the agent loop or tool registry (that lands
-// in Phase 2).
+// Phase 2: Agent Loop + basic tool calling (read_file, write_file).
+// Equivalent to the console session startup + internal/agent from main.go.
 
 import * as readline from "node:readline/promises";
 import { stdin, stdout } from "node:process";
+import { Agent } from "./agent.js";
 import { createProvider } from "./provider/index.js";
-import type { Message } from "./provider/types.js";
+import { ToolRegistry } from "./tools/registry.js";
+import { readFileTool } from "./tools/read_file.js";
+import { writeFileTool } from "./tools/write_file.js";
 
 async function main() {
   const provider = createProvider();
-  const messages: Message[] = [];
+
+  const tools = new ToolRegistry();
+  tools.register(readFileTool);
+  tools.register(writeFileTool);
+
+  const agent = new Agent({
+    provider,
+    tools,
+    onToolCall: (name, rawInput) => console.log(`[tool] ${name} ${rawInput}`),
+    onAssistantText: (text) => console.log(text),
+  });
+
   const rl = readline.createInterface({ input: stdin, output: stdout });
 
   console.log(`boilerplate-harness — model: ${provider.model}`);
+  console.log(`tools: ${tools.definitions().map((t) => t.name).join(", ")}`);
   console.log("Type your message and press Enter. Ctrl+C to exit.\n");
 
   while (true) {
@@ -26,12 +40,8 @@ async function main() {
     }
     if (!input.trim()) continue;
 
-    messages.push({ role: "user", content: input });
-
-    const response = await provider.send(messages);
-    messages.push({ role: "assistant", content: response.text });
-
-    console.log(`\n${response.text}\n`);
+    await agent.send(input);
+    console.log();
   }
 
   console.log("\nBye!");

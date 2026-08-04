@@ -1,22 +1,35 @@
-// Minimal types for Phase 1: plain text only, no tools yet.
-// Reduced equivalent of internal/api/types.go (Role, Message) and
-// internal/provider/provider.go (the Provider interface) from the Go
-// project.
-//
-// Go uses a Message struct with Content []Block because a single message
-// can mix text, tool_use, and tool_result. Here, without tools yet, content
-// is a plain string — the block abstraction lands in Phase 2.
+// Phase 2: a message's content stops being a plain string and becomes an
+// array of blocks (text / tool_use / tool_result) - as the Phase 1 comment
+// anticipated. This is the equivalent of api.Block / api.Message in
+// internal/api/types.go: a generic shape that each provider translates
+// to/from its own SDK's format. Anthropic and OpenAI-compatible
+// (OpenRouter) represent tool calling quite differently under the hood;
+// this type is what lets the rest of the harness stay oblivious to that.
 
 export type Role = "user" | "assistant";
 
+export type Block =
+  | { type: "text"; text: string }
+  | { type: "tool_use"; toolUseId: string; toolName: string; toolInput: string } // toolInput: raw JSON, pass-through
+  | { type: "tool_result"; toolUseId: string; toolResult: string; isError: boolean };
+
 export interface Message {
   role: Role;
-  content: string;
+  content: Block[];
 }
 
-export interface ProviderResponse {
-  text: string;
-  stopReason: string;
+export interface ToolDef {
+  name: string;
+  description: string;
+  inputSchema: Record<string, unknown>; // JSON Schema "properties"
+  required: string[];
+}
+
+export type StopReason = "end_turn" | "tool_use" | "other";
+
+export interface Response {
+  content: Block[];
+  stopReason: StopReason;
 }
 
 // Analogous to Go's Provider interface:
@@ -26,10 +39,7 @@ export interface ProviderResponse {
 //       Model() string
 //       SetModel(name string)
 //   }
-//
-// In TS, `ctx context.Context` has no direct equivalent: Node uses
-// AbortSignal for cancellation, which we'll add later if needed.
 export interface Provider {
   readonly model: string;
-  send(messages: Message[]): Promise<ProviderResponse>;
+  send(messages: Message[], tools?: ToolDef[]): Promise<Response>;
 }

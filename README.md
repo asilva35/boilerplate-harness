@@ -34,4 +34,14 @@ npm run typecheck   # tsc --noEmit
 
 Try it: run `npm start` and hold a multi-turn conversation to confirm the `messages` array keeps context across turns.
 
+## Phase 2: Agent Loop and Basic Tool Calling
+
+**Key concept:** the *Agent Loop* pattern. The LLM decides when to answer the user directly and when to request a local function call.
+
+- `Tool` type and Zod schema to validate arguments (`src/tools/types.ts`).
+- `read_file` and `write_file` tools using `node:fs/promises`.
+- The `Agent` (`src/agent.ts`) processes `stop_reason === "tool_use"` responses: it executes the local tool and feeds the result back in a `user`-role message with `tool_result` content.
+
+Try it: ask the agent *"Create a file called test.txt with the phrase 'Hello from my agent' and then read it back to confirm its content."*
+
 More phases land here as the project grows — see the commit history for the full progression.
