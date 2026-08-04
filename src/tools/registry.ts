@@ -49,6 +49,7 @@ export class ToolRegistry {
 }
 
 function toToolDef(tool: Tool): ToolDef {
+  if (tool.toolDef) return tool.toolDef;
   const schema = zodToJsonSchema(tool.schema) as {
     properties?: Record<string, unknown>;
     required?: string[];

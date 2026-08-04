@@ -6,22 +6,87 @@ Built phase by phase, one commit per phase, so the git history itself doubles as
 
 ## Requirements
 
-- **Node.js ≥ 20**.
+- **Node.js ≥ 20** (needed once `@modelcontextprotocol/sdk` and `ink` are in, since they use ES2024 regex syntax not supported on Node 18).
+- This repo pins **Node 22.21.0** in `.nvmrc`. If you use [nvm](https://github.com/nvm-sh/nvm):
+
+  ```sh
+  nvm install   # installs the version in .nvmrc if you don't have it
+  nvm use       # activates it in this terminal
+  ```
+
+  Run `nvm use` in every new terminal before `npm run ...` — nvm doesn't switch versions on its own. If you forget, you'll see `SyntaxError: Invalid regular expression flags` on startup.
+
 - An API key from **Anthropic** ([console.anthropic.com](https://console.anthropic.com)) or **OpenRouter** ([openrouter.ai](https://openrouter.ai)) — whichever you have on hand. OpenRouter is the fallback if your card isn't accepted directly by Anthropic (happens in some countries); it gives access to the same Claude models through a proxy.
 
 ## Setup
 
 ```sh
-nvm use   # if you use nvm — installs/activates the version in .nvmrc
+nvm use
 npm install
 cp .env.example .env   # and fill in your API key there
 ```
 
 ## Run
 
+Two entry points, same session underneath (same provider, tools, MCP, Agent):
+
 ```sh
-npm start          # plain console REPL
+npm start      # plain console REPL — the "no magic" version to read first
+npm run tui    # Ink-based TUI — input history, spinner, live [y/N] prompt
+```
+
+Start with `npm start` if you're going through the code for the first time; it's easier to follow without the React layer on top. `npm run tui` is the more polished version.
+
+```sh
 npm run typecheck   # tsc --noEmit
+```
+
+## Commands inside a session
+
+| Command | Effect |
+|---|---|
+| `/help` | List available commands |
+| `/clear` | Clear the conversation history |
+| `/history` | Show a summary of the message history |
+| `/compact [sliding\|none]` | Run compaction now (configured strategy, or an ad-hoc one) |
+| `/exit` | Exit the harness |
+
+In `npm start`, `Ctrl+D` also exits (readline EOF). In `npm run tui`, use `/exit` or `Ctrl+D`.
+
+## MCP (optional)
+
+`mcp.json` (gitignored, may hold secrets) connects external servers via the [Model Context Protocol](https://modelcontextprotocol.io). Copy `mcp.example.json` as a starting point:
+
+```sh
+cp mcp.example.json mcp.json
+```
+
+Its tools show up alongside the local ones, under `"<server>_<tool>"`. By default they ask for `[y/N]` approval before running (we have no way to know upfront how risky an external server is).
+
+## Project structure
+
+```
+src/
+├── index.ts              Plain console REPL (entry point 1)
+├── tui.tsx                Ink TUI REPL (entry point 2)
+├── agent.ts               Agent Loop: tool-use, permissions, compaction
+├── commands.ts             "/" command registry
+├── config.ts               Environment variables
+├── provider/                LLM abstraction layer
+│   ├── types.ts               Message, Block, ToolDef, Provider interface
+│   ├── anthropic.ts            Anthropic adapter
+│   ├── openrouter.ts           OpenRouter adapter (OpenAI-compatible API)
+│   └── index.ts                 createProvider() factory
+├── tools/                    Tool registry and implementations
+│   ├── types.ts                 Tool interface (Zod schema)
+│   ├── registry.ts               ToolRegistry
+│   ├── bash.ts / read_file.ts / write_file.ts
+├── context/
+│   └── compactor.ts           Compaction strategies (SlidingWindow, NoCompaction)
+├── mcp/                      Model Context Protocol integration
+│   ├── client.ts               MCP session wrapper (stdio / HTTP)
+│   └── register.ts              Loads mcp.json and registers remote tools
+└── ui/                        Ink components (spinner, input, App)
 ```
 
 ## Phase 1: Base Config and Minimal Viable Product (REPL, no tools)
@@ -61,5 +126,14 @@ Try it: ask the agent to run `ls -la` or install an npm package, and confirm the
 - A truncation/compaction strategy keeps the system prompt and the most recent messages once a token-usage threshold is crossed.
 
 Try it: run `/compact` in the CLI and see the message array shrink without losing the essential state.
+
+## Phase 5: Advanced Integration (MCP and Ink TUI)
+
+**Key concept:** ecosystem and user experience. Connecting external servers via the Model Context Protocol and a richer terminal interface.
+
+- External tools connected via `@modelcontextprotocol/sdk`.
+- Migration from the plain console to interactive components with **Ink** (React for the CLI) as a second, optional entry point (`npm run tui`) — `src/index.ts` stays untouched on purpose.
+
+Try it: copy `mcp.example.json` to `mcp.json`, run `npm run tui`, and confirm the MCP server's tools show up alongside the local ones (and ask for approval before running, same as `bash`/`write_file`).
 
 More phases land here as the project grows — see the commit history for the full progression.

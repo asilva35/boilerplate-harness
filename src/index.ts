@@ -1,12 +1,15 @@
-// Phase 4: context management (compaction) + slash commands. Equivalent to
-// the console session startup + internal/agent + internal/compact +
-// commands.go from main.go, without the Bubble Tea TUI.
+// Phase 5: MCP integration. Equivalent to the console session startup +
+// internal/agent + internal/compact + internal/mcp + commands.go from
+// main.go, without the Bubble Tea TUI (the migration to Ink is an optional
+// step, included alongside this one — see src/tui.tsx).
 
 import * as readline from "node:readline/promises";
 import { stdin, stdout } from "node:process";
 import { Agent } from "./agent.js";
 import { runCommand } from "./commands.js";
 import { SlidingWindow } from "./context/compactor.js";
+import { loadConfig, registerMCPServers } from "./mcp/register.js";
+import type { MCPClient } from "./mcp/client.js";
 import { createProvider } from "./provider/index.js";
 import { ToolRegistry } from "./tools/registry.js";
 import { bashTool } from "./tools/bash.js";
@@ -20,6 +23,14 @@ async function main() {
   tools.register(readFileTool);
   tools.register(writeFileTool);
   tools.register(bashTool);
+
+  // mcp.json is optional (gitignored, like in Go) — its absence is not an
+  // error, it simply means there are no remote tools to register.
+  let mcpClients: MCPClient[] = [];
+  const mcpConfig = await loadConfig("mcp.json");
+  if (mcpConfig) {
+    mcpClients = await registerMCPServers(mcpConfig, tools);
+  }
 
   const rl = readline.createInterface({ input: stdin, output: stdout });
 
@@ -61,6 +72,7 @@ async function main() {
     console.log();
   }
 
+  await Promise.all(mcpClients.map((c) => c.close()));
   console.log("\nBye!");
 }
 

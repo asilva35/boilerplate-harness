@@ -20,8 +20,16 @@
 // risk instead, as the migration guide suggests: read_file is read-only
 // and runs directly; bash and write_file can alter the system, so the
 // agent loop intercepts them before executing.
+//
+// toolDef (Phase 5): for local tools, the JSON Schema the model sees is
+// derived from the Zod `schema` (see registry.ts). For MCP tools, the real
+// JSON Schema already comes assembled from the remote server — same as in
+// Go, where MCPTool.Definition() returns the stored Def as-is, without
+// going through any Go-side parser. When `toolDef` is present, the
+// registry uses it directly and skips the Zod-based derivation.
 
 import type { ZodType } from "zod";
+import type { ToolDef } from "../provider/types.js";
 
 export interface ToolResult {
   result: string;
@@ -32,6 +40,7 @@ export interface Tool<TInput = any> {
   name: string;
   description: string;
   schema: ZodType<TInput>;
+  toolDef?: ToolDef;
   requiresConfirmation?: boolean;
   execute(input: TInput): Promise<ToolResult> | ToolResult;
 }

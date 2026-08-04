@@ -28,6 +28,7 @@ const commands: Record<string, Command> = {
     usage: "/compact [sliding|none]",
     run: cmdCompact,
   },
+  exit: { description: "exit the harness", run: cmdExit },
 };
 
 export function runCommand(line: string, ctx: CommandContext): boolean {
@@ -102,4 +103,13 @@ function cmdCompact(args: string, ctx: CommandContext): void {
   const compacted = strategy.compact(before);
   ctx.agent.setMessages(compacted);
   console.log(`compacted: ${before.length} → ${compacted.length} messages`);
+}
+
+// Same as cmdExit in Go (direct os.Exit(0), without propagating the signal
+// upward): simpler than threading an "exit" through the REPL or the Ink UI,
+// at the cost of skipping any pending cleanup (e.g. closing MCP processes)
+// — the same limitation the original Go project has, since os.Exit doesn't
+// run deferred functions either.
+function cmdExit(): void {
+  process.exit(0);
 }
