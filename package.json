@@ -7,6 +7,7 @@
   "scripts": {
     "start": "tsx src/index.ts",
     "tui": "tsx src/tui.tsx",
+    "web": "tsx src/server.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
@@ -15,12 +16,14 @@
     "ink": "^7.1.1",
     "openai": "^4.68.4",
     "react": "^19.2.8",
+    "ws": "^8.18.0",
     "zod": "^3.23.8",
     "zod-to-json-schema": "^3.23.5"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",
     "@types/react": "^19.2.18",
+    "@types/ws": "^8.5.13",
     "tsx": "^4.19.2",
     "typescript": "^5.6.3"
   }

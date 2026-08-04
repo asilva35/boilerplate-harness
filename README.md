@@ -28,14 +28,17 @@ cp .env.example .env   # and fill in your API key there
 
 ## Run
 
-Two entry points, same session underneath (same provider, tools, MCP, Agent):
+Three entry points, same session underneath (same provider, tools, MCP, Agent):
 
 ```sh
 npm start      # plain console REPL — the "no magic" version to read first
 npm run tui    # Ink-based TUI — input history, spinner, live [y/N] prompt
+npm run web    # server + browser chat
 ```
 
 Start with `npm start` if you're going through the code for the first time; it's easier to follow without the React layer on top. `npm run tui` is the more polished version.
+
+`npm run web` starts an HTTP + WebSocket server **on `127.0.0.1` only** (never on the local network — `bash` and `write_file` must never be reachable from the outside) and serves a chat at `http://127.0.0.1:3003` (port configurable via `WEB_PORT`). It's a single, global session: every tab you open shares the same conversation, just like several windows of the same REPL.
 
 ```sh
 npm run typecheck   # tsc --noEmit
@@ -69,6 +72,9 @@ Its tools show up alongside the local ones, under `"<server>_<tool>"`. By defaul
 src/
 ├── index.ts              Plain console REPL (entry point 1)
 ├── tui.tsx                Ink TUI REPL (entry point 2)
+├── server.ts               HTTP + WebSocket server for the browser chat (entry point 3)
+├── web/
+│   └── index.html            Static chat frontend (HTML/CSS/JS, no build)
 ├── agent.ts               Agent Loop: tool-use, permissions, compaction
 ├── commands.ts             "/" command registry
 ├── config.ts               Environment variables
@@ -135,5 +141,14 @@ Try it: run `/compact` in the CLI and see the message array shrink without losin
 - Migration from the plain console to interactive components with **Ink** (React for the CLI) as a second, optional entry point (`npm run tui`) — `src/index.ts` stays untouched on purpose.
 
 Try it: copy `mcp.example.json` to `mcp.json`, run `npm run tui`, and confirm the MCP server's tools show up alongside the local ones (and ask for approval before running, same as `bash`/`write_file`).
+
+## Phase 6: Browser Access
+
+**Key concept:** the Agent Loop is already transport-agnostic (it receives `onToolCall`/`onAssistantText`/`confirm` as callbacks) — a fourth entry point can wire those same callbacks against a WebSocket instead of the terminal, without touching `agent.ts` at all.
+
+- `src/server.ts`: HTTP + WebSocket server, bound exclusively to `127.0.0.1` (never to the network), single global session.
+- `src/web/index.html`: a chat with bubbles, tool-call chips, and `[Yes/No]` approval, in vanilla JS with no build step.
+
+Try it: run `npm run web`, open `http://127.0.0.1:3003`, and confirm two tabs share the same live conversation.
 
 More phases land here as the project grows — see the commit history for the full progression.

@@ -1,0 +1,332 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>boilerplate-harness</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #f4f5f7;
+    --panel: #ffffff;
+    --text: #1a1d21;
+    --muted: #6b7280;
+    --border: #e2e4e8;
+    --user: #2563eb;
+    --user-text: #ffffff;
+    --assistant: #eef0f3;
+    --chip: #fef3c7;
+    --chip-text: #92400e;
+    --error: #fecaca;
+    --error-text: #7f1d1d;
+    --accent: #2563eb;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #17181c;
+      --panel: #202127;
+      --text: #e7e8ea;
+      --muted: #9aa0a8;
+      --border: #33353b;
+      --assistant: #2b2d34;
+      --chip: #3f3419;
+      --chip-text: #f2c879;
+      --error: #4a2323;
+      --error-text: #f2a3a3;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+  }
+  header {
+    padding: 0.75rem 1.25rem;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+  }
+  header h1 { font-size: 0.95rem; font-weight: 600; margin: 0; }
+  #status { font-size: 0.75rem; color: var(--muted); }
+  #status.connected::before { content: "● "; color: #16a34a; }
+  #status.disconnected::before { content: "● "; color: #dc2626; }
+  main {
+    flex: 1;
+    overflow-y: auto;
+    padding: 1rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+  .row { display: flex; }
+  .row.user { justify-content: flex-end; }
+  .bubble {
+    max-width: 70%;
+    padding: 0.55rem 0.85rem;
+    border-radius: 0.9rem;
+    white-space: pre-wrap;
+    word-break: break-word;
+    line-height: 1.4;
+    font-size: 0.92rem;
+  }
+  .row.user .bubble { background: var(--user); color: var(--user-text); border-bottom-right-radius: 0.2rem; }
+  .row.assistant .bubble { background: var(--assistant); color: var(--text); border-bottom-left-radius: 0.2rem; }
+  .chip {
+    align-self: flex-start;
+    background: var(--chip);
+    color: var(--chip-text);
+    font-family: ui-monospace, monospace;
+    font-size: 0.78rem;
+    padding: 0.35rem 0.65rem;
+    border-radius: 0.5rem;
+    max-width: 85%;
+    overflow-wrap: anywhere;
+  }
+  .error-bubble {
+    align-self: flex-start;
+    background: var(--error);
+    color: var(--error-text);
+    font-size: 0.85rem;
+    padding: 0.5rem 0.75rem;
+    border-radius: 0.6rem;
+  }
+  footer {
+    border-top: 1px solid var(--border);
+    padding: 0.75rem 1rem;
+    background: var(--panel);
+  }
+  #thinking {
+    display: none;
+    font-size: 0.8rem;
+    color: var(--muted);
+    margin-bottom: 0.5rem;
+  }
+  #thinking.show { display: block; }
+  form#inputForm { display: flex; gap: 0.5rem; }
+  textarea#inputBox {
+    flex: 1;
+    resize: none;
+    border: 1px solid var(--border);
+    border-radius: 0.6rem;
+    padding: 0.55rem 0.75rem;
+    font: inherit;
+    background: var(--panel);
+    color: var(--text);
+    max-height: 6rem;
+  }
+  button {
+    border: none;
+    border-radius: 0.6rem;
+    padding: 0 1rem;
+    font: inherit;
+    font-weight: 600;
+    cursor: pointer;
+    background: var(--accent);
+    color: white;
+  }
+  button:disabled { opacity: 0.5; cursor: default; }
+  #approvalBox {
+    display: none;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.6rem 0.85rem;
+    border: 1px solid var(--border);
+    border-radius: 0.6rem;
+    background: var(--assistant);
+  }
+  #approvalBox.show { display: flex; }
+  #approvalText { flex: 1; font-family: ui-monospace, monospace; font-size: 0.8rem; overflow-wrap: anywhere; }
+  #approvalBox button.no { background: #6b7280; }
+</style>
+</head>
+<body>
+<header>
+  <h1>boilerplate-harness</h1>
+  <span id="status" class="disconnected">connecting…</span>
+</header>
+
+<main id="chat"></main>
+
+<footer>
+  <div id="thinking">thinking…</div>
+  <div id="approvalBox">
+    <span id="approvalText"></span>
+    <button class="yes" id="approveYes">Yes</button>
+    <button class="no" id="approveNo">No</button>
+  </div>
+  <form id="inputForm">
+    <textarea id="inputBox" rows="1" placeholder="Type your message or /help…"></textarea>
+    <button type="submit" id="sendBtn">Send</button>
+  </form>
+</footer>
+
+<script>
+  const chat = document.getElementById("chat");
+  const statusEl = document.getElementById("status");
+  const thinkingEl = document.getElementById("thinking");
+  const approvalBox = document.getElementById("approvalBox");
+  const approvalText = document.getElementById("approvalText");
+  const inputForm = document.getElementById("inputForm");
+  const inputBox = document.getElementById("inputBox");
+  const sendBtn = document.getElementById("sendBtn");
+
+  let ws = null;
+  let reconnectDelay = 1000;
+
+  function scrollToBottom() {
+    chat.scrollTop = chat.scrollHeight;
+  }
+
+  function addBubble(role, text) {
+    const row = document.createElement("div");
+    row.className = "row " + role;
+    const bubble = document.createElement("div");
+    bubble.className = "bubble";
+    bubble.textContent = text;
+    row.appendChild(bubble);
+    chat.appendChild(row);
+    scrollToBottom();
+  }
+
+  function addChip(text) {
+    const chip = document.createElement("div");
+    chip.className = "chip";
+    chip.textContent = text;
+    chat.appendChild(chip);
+    scrollToBottom();
+  }
+
+  function addErrorBubble(text) {
+    const el = document.createElement("div");
+    el.className = "error-bubble";
+    el.textContent = text;
+    chat.appendChild(el);
+    scrollToBottom();
+  }
+
+  function truncate(s, n) {
+    return s.length <= n ? s : s.slice(0, n) + "…";
+  }
+
+  // Rebuilds the previous conversation from agent.getMessages() (Message[]
+  // with Block[] from provider/types.ts) — same shape commands.ts already
+  // summarizes in the terminal, but rendered as a chat.
+  function renderHistory(messages) {
+    chat.innerHTML = "";
+    for (const m of messages) {
+      for (const block of m.content) {
+        if (block.type === "text") {
+          if (block.text.trim()) addBubble(m.role, block.text);
+        } else if (block.type === "tool_use") {
+          addChip(`🔧 ${block.toolName} ${truncate(block.toolInput, 200)}`);
+        } else if (block.type === "tool_result") {
+          addChip(`${block.isError ? "✗" : "✓"} ${truncate(block.toolResult, 200)}`);
+        }
+      }
+    }
+  }
+
+  function setMode(mode) {
+    thinkingEl.classList.toggle("show", mode === "thinking");
+    approvalBox.classList.toggle("show", mode === "approval");
+    const disable = mode !== "idle";
+    inputBox.disabled = disable;
+    sendBtn.disabled = disable;
+  }
+
+  let pendingApproval = null;
+
+  function connect() {
+    const proto = location.protocol === "https:" ? "wss://" : "ws://";
+    ws = new WebSocket(proto + location.host);
+
+    ws.addEventListener("open", () => {
+      statusEl.textContent = "connected";
+      statusEl.className = "connected";
+      reconnectDelay = 1000;
+    });
+
+    ws.addEventListener("close", () => {
+      statusEl.textContent = "disconnected, retrying…";
+      statusEl.className = "disconnected";
+      setTimeout(connect, reconnectDelay);
+      reconnectDelay = Math.min(reconnectDelay * 2, 10000);
+    });
+
+    ws.addEventListener("error", () => ws.close());
+
+    ws.addEventListener("message", (event) => {
+      const msg = JSON.parse(event.data);
+      switch (msg.type) {
+        case "history":
+          renderHistory(msg.messages);
+          setMode("idle");
+          break;
+        case "user_text":
+          addBubble("user", msg.text);
+          break;
+        case "assistant_text":
+          addBubble("assistant", msg.text);
+          break;
+        case "tool_call":
+          addChip(`🔧 ${msg.name} ${truncate(msg.input, 200)}`);
+          break;
+        case "confirm_request":
+          pendingApproval = true;
+          approvalText.textContent = `approve "${msg.name}" ${truncate(msg.input, 160)}?`;
+          setMode("approval");
+          break;
+        case "mode":
+          if (msg.mode === "thinking") setMode("thinking");
+          else if (!pendingApproval) setMode("idle");
+          break;
+        case "error":
+          addErrorBubble("error: " + msg.message);
+          break;
+      }
+    });
+  }
+
+  inputForm.addEventListener("submit", (e) => {
+    e.preventDefault();
+    const line = inputBox.value.trim();
+    if (!line || !ws || ws.readyState !== WebSocket.OPEN) return;
+    ws.send(JSON.stringify({ type: "input", line }));
+    inputBox.value = "";
+    inputBox.style.height = "auto";
+  });
+
+  inputBox.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      inputForm.requestSubmit();
+    }
+  });
+
+  inputBox.addEventListener("input", () => {
+    inputBox.style.height = "auto";
+    inputBox.style.height = Math.min(inputBox.scrollHeight, 96) + "px";
+  });
+
+  function respondApproval(approved) {
+    pendingApproval = null;
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type: "confirm_response", approved }));
+    }
+    setMode("idle");
+  }
+
+  document.getElementById("approveYes").addEventListener("click", () => respondApproval(true));
+  document.getElementById("approveNo").addEventListener("click", () => respondApproval(false));
+
+  setMode("idle");
+  connect();
+</script>
+</body>
+</html>
