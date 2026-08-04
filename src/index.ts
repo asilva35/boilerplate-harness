@@ -1,10 +1,12 @@
-// Phase 3: permission gate + bash tool. Equivalent to the console session
-// startup + internal/agent + Confirm from main.go, without the Bubble Tea
-// TUI (here the [y/N] prompt is plain text on the console).
+// Phase 4: context management (compaction) + slash commands. Equivalent to
+// the console session startup + internal/agent + internal/compact +
+// commands.go from main.go, without the Bubble Tea TUI.
 
 import * as readline from "node:readline/promises";
 import { stdin, stdout } from "node:process";
 import { Agent } from "./agent.js";
+import { runCommand } from "./commands.js";
+import { SlidingWindow } from "./context/compactor.js";
 import { createProvider } from "./provider/index.js";
 import { ToolRegistry } from "./tools/registry.js";
 import { bashTool } from "./tools/bash.js";
@@ -24,6 +26,9 @@ async function main() {
   const agent = new Agent({
     provider,
     tools,
+    // Trim as soon as we pass 20 messages, or sooner if the history already
+    // weighs ~4000 estimated tokens — whichever comes first.
+    compactor: new SlidingWindow(20, 4000),
     onToolCall: (name, rawInput) => console.log(`[tool] ${name} ${rawInput}`),
     onAssistantText: (text) => console.log(text),
     confirm: async (name, rawInput) => {
@@ -34,7 +39,7 @@ async function main() {
 
   console.log(`boilerplate-harness — model: ${provider.model}`);
   console.log(`tools: ${tools.definitions().map((t) => t.name).join(", ")}`);
-  console.log("Type your message and press Enter. Ctrl+C to exit.\n");
+  console.log("Type your message and press Enter, or /help for commands. Ctrl+C to exit.\n");
 
   while (true) {
     let input: string;
@@ -46,6 +51,11 @@ async function main() {
       throw err;
     }
     if (!input.trim()) continue;
+
+    if (runCommand(input, { agent })) {
+      console.log();
+      continue;
+    }
 
     await agent.send(input);
     console.log();

@@ -7,7 +7,14 @@
 // loop pauses before executing it and waits for [y/N]. Without `confirm`
 // (or for tools that don't require it), it executes directly, same as Go
 // treating `Confirm == nil` as "auto-approve everything."
+//
+// Phase 4: compaction. Just like a.Compactor in Go, it runs at the start
+// of every loop turn — even within the same user turn if there are several
+// back-and-forth tool-use round trips. getMessages/setMessages/
+// clearMessages expose the history so slash commands (/compact, /clear,
+// /history) can read and mutate it from outside the loop.
 
+import { NoCompaction, type CompactionStrategy } from "./context/compactor.js";
 import type { Block, Message, Provider } from "./provider/types.js";
 import type { ToolRegistry } from "./tools/registry.js";
 
@@ -18,6 +25,7 @@ export interface AgentOptions {
   onToolCall?: (name: string, rawInput: string) => void;
   onAssistantText?: (text: string) => void;
   confirm?: (name: string, rawInput: string) => Promise<boolean> | boolean;
+  compactor?: CompactionStrategy;
 }
 
 export class Agent {
@@ -27,6 +35,7 @@ export class Agent {
   private readonly onToolCall?: (name: string, rawInput: string) => void;
   private readonly onAssistantText?: (text: string) => void;
   private readonly confirm?: (name: string, rawInput: string) => Promise<boolean> | boolean;
+  compactor: CompactionStrategy;
   private messages: Message[] = [];
 
   constructor(opts: AgentOptions) {
@@ -36,6 +45,19 @@ export class Agent {
     this.onToolCall = opts.onToolCall;
     this.onAssistantText = opts.onAssistantText;
     this.confirm = opts.confirm;
+    this.compactor = opts.compactor ?? new NoCompaction();
+  }
+
+  getMessages(): Message[] {
+    return this.messages;
+  }
+
+  setMessages(messages: Message[]): void {
+    this.messages = messages;
+  }
+
+  clearMessages(): void {
+    this.messages = [];
   }
 
   async send(prompt: string): Promise<string> {
@@ -47,6 +69,13 @@ export class Agent {
     const finalText: string[] = [];
 
     for (let turn = 0; turn < this.maxTurns; turn++) {
+      const before = this.messages;
+      const compacted = this.compactor.compact(before);
+      if (compacted.length !== before.length) {
+        console.log(`[compact] ${before.length} → ${compacted.length} messages`);
+      }
+      this.messages = compacted;
+
       const response = await this.provider.send(this.messages, this.tools.definitions());
       this.messages.push({ role: "assistant", content: response.content });
 

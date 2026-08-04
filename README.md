@@ -53,4 +53,13 @@ Try it: ask the agent *"Create a file called test.txt with the phrase 'Hello fro
 
 Try it: ask the agent to run `ls -la` or install an npm package, and confirm the CLI pauses execution to ask for your approval.
 
+## Phase 4: Context Management, Sliding Window, and Slash Commands
+
+**Key concept:** handling token-limit overhead (*context window overhead*) and harness control commands.
+
+- Intercepts input starting with `/` (`/help`, `/clear`, `/compact`, `/history`).
+- A truncation/compaction strategy keeps the system prompt and the most recent messages once a token-usage threshold is crossed.
+
+Try it: run `/compact` in the CLI and see the message array shrink without losing the essential state.
+
 More phases land here as the project grows — see the commit history for the full progression.
