@@ -20,6 +20,10 @@ export class ToolRegistry {
       .map(toToolDef);
   }
 
+  requiresConfirmation(name: string): boolean {
+    return this.tools.get(name)?.requiresConfirmation ?? false;
+  }
+
   async execute(name: string, rawInput: string): Promise<ToolResult> {
     const tool = this.tools.get(name);
     if (!tool) return { result: `unknown tool: ${name}`, isError: true };

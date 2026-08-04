@@ -11,6 +11,7 @@ export const writeFileTool: Tool<z.infer<typeof schema>> = {
   name: "write_file",
   description: "Write content to a file at the given path. Creates or overwrites.",
   schema,
+  requiresConfirmation: true,
   async execute({ path, content }): Promise<ToolResult> {
     try {
       await writeFile(path, content, "utf-8");

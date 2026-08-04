@@ -44,4 +44,13 @@ Try it: run `npm start` and hold a multi-turn conversation to confirm the `messa
 
 Try it: ask the agent *"Create a file called test.txt with the phrase 'Hello from my agent' and then read it back to confirm its content."*
 
+## Phase 3: Permission Gate and Shell Command Execution
+
+**Key concept:** safety and inspection. Controlling the execution of potentially destructive commands before they run.
+
+- `bash` tool using `node:child_process.spawn`.
+- The agent loop pauses before executing tools flagged as risky (`requiresConfirmation`) to ask for explicit `[y/N]` confirmation on the console.
+
+Try it: ask the agent to run `ls -la` or install an npm package, and confirm the CLI pauses execution to ask for your approval.
+
 More phases land here as the project grows — see the commit history for the full progression.

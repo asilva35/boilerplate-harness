@@ -14,6 +14,12 @@
 // { isError: true } so the model can read it and retry, instead of taking
 // down the loop — same criterion AGENTS.md documents for the Go project
 // ("Errors as tool results, not Go errors").
+//
+// requiresConfirmation (Phase 3): the original Go project asks for [y/N]
+// approval on EVERY tool call, without distinction. Here we classify by
+// risk instead, as the migration guide suggests: read_file is read-only
+// and runs directly; bash and write_file can alter the system, so the
+// agent loop intercepts them before executing.
 
 import type { ZodType } from "zod";
 
@@ -26,5 +32,6 @@ export interface Tool<TInput = any> {
   name: string;
   description: string;
   schema: ZodType<TInput>;
+  requiresConfirmation?: boolean;
   execute(input: TInput): Promise<ToolResult> | ToolResult;
 }

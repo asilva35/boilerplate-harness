@@ -1,11 +1,13 @@
-// Phase 2: Agent Loop + basic tool calling (read_file, write_file).
-// Equivalent to the console session startup + internal/agent from main.go.
+// Phase 3: permission gate + bash tool. Equivalent to the console session
+// startup + internal/agent + Confirm from main.go, without the Bubble Tea
+// TUI (here the [y/N] prompt is plain text on the console).
 
 import * as readline from "node:readline/promises";
 import { stdin, stdout } from "node:process";
 import { Agent } from "./agent.js";
 import { createProvider } from "./provider/index.js";
 import { ToolRegistry } from "./tools/registry.js";
+import { bashTool } from "./tools/bash.js";
 import { readFileTool } from "./tools/read_file.js";
 import { writeFileTool } from "./tools/write_file.js";
 
@@ -15,15 +17,20 @@ async function main() {
   const tools = new ToolRegistry();
   tools.register(readFileTool);
   tools.register(writeFileTool);
+  tools.register(bashTool);
+
+  const rl = readline.createInterface({ input: stdin, output: stdout });
 
   const agent = new Agent({
     provider,
     tools,
     onToolCall: (name, rawInput) => console.log(`[tool] ${name} ${rawInput}`),
     onAssistantText: (text) => console.log(text),
+    confirm: async (name, rawInput) => {
+      const answer = await rl.question(`  approve "${name}" ${rawInput}? [y/N] `);
+      return /^y(es)?$/i.test(answer.trim());
+    },
   });
-
-  const rl = readline.createInterface({ input: stdin, output: stdout });
 
   console.log(`boilerplate-harness — model: ${provider.model}`);
   console.log(`tools: ${tools.definitions().map((t) => t.name).join(", ")}`);
