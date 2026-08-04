@@ -8,7 +8,8 @@
     "start": "tsx src/index.ts",
     "tui": "tsx src/tui.tsx",
     "web": "tsx src/server.ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "tsx --test $(find src -name '*.test.ts')"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.32.1",

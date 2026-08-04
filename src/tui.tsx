@@ -6,6 +6,7 @@
 import { render } from "ink";
 import { Agent } from "./agent.js";
 import { SlidingWindow } from "./context/compactor.js";
+import { reportFatal } from "./errors.js";
 import { loadConfig, registerMCPServers } from "./mcp/register.js";
 import type { MCPClient } from "./mcp/client.js";
 import { createProvider } from "./provider/index.js";
@@ -58,9 +59,7 @@ async function main() {
 
   await waitUntilExit();
   await Promise.all(mcpClients.map((c) => c.close()));
+  console.log("\nBye!");
 }
 
-main().catch((err) => {
-  console.error("Fatal error:", err);
-  process.exit(1);
-});
+main().catch(reportFatal);

@@ -8,6 +8,7 @@ import { stdin, stdout } from "node:process";
 import { Agent } from "./agent.js";
 import { runCommand } from "./commands.js";
 import { SlidingWindow } from "./context/compactor.js";
+import { reportFatal } from "./errors.js";
 import { loadConfig, registerMCPServers } from "./mcp/register.js";
 import type { MCPClient } from "./mcp/client.js";
 import { createProvider } from "./provider/index.js";
@@ -31,6 +32,18 @@ async function main() {
   if (mcpConfig) {
     mcpClients = await registerMCPServers(mcpConfig, tools);
   }
+
+  // Shared between the natural EOF exit (falls out of the loop below) and
+  // Ctrl+C: without an explicit SIGINT handler, Node's default action is to
+  // kill the process immediately with no cleanup and no goodbye.
+  async function cleanup(): Promise<void> {
+    await Promise.all(mcpClients.map((c) => c.close()));
+    console.log("\nBye!");
+  }
+  process.on("SIGINT", async () => {
+    await cleanup();
+    process.exit(0);
+  });
 
   const rl = readline.createInterface({ input: stdin, output: stdout });
 
@@ -72,11 +85,7 @@ async function main() {
     console.log();
   }
 
-  await Promise.all(mcpClients.map((c) => c.close()));
-  console.log("\nBye!");
+  await cleanup();
 }
 
-main().catch((err) => {
-  console.error("Fatal error:", err);
-  process.exit(1);
-});
+main().catch(reportFatal);

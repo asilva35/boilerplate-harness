@@ -90,7 +90,7 @@ export function App({ agent, registerConfirm }: AppProps) {
 
     if (mode === "thinking") return; // ignore keystrokes while the model is responding
 
-    if (key.ctrl && input === "d") {
+    if (key.ctrl && (input === "d" || input === "c")) {
       exit();
       return;
     }

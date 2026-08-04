@@ -21,6 +21,7 @@ import { WebSocketServer, type WebSocket } from "ws";
 import { Agent } from "./agent.js";
 import { runCommand } from "./commands.js";
 import { SlidingWindow } from "./context/compactor.js";
+import { reportFatal } from "./errors.js";
 import { loadConfig, registerMCPServers } from "./mcp/register.js";
 import type { MCPClient } from "./mcp/client.js";
 import { createProvider } from "./provider/index.js";
@@ -165,7 +166,4 @@ async function main() {
   });
 }
 
-main().catch((err) => {
-  console.error("Fatal error:", err);
-  process.exit(1);
-});
+main().catch(reportFatal);

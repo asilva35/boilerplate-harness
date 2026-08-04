@@ -42,6 +42,7 @@ Start with `npm start` if you're going through the code for the first time; it's
 
 ```sh
 npm run typecheck   # tsc --noEmit
+npm test             # node:test, no API key needed
 ```
 
 ## Commands inside a session
@@ -150,5 +151,16 @@ Try it: copy `mcp.example.json` to `mcp.json`, run `npm run tui`, and confirm th
 - `src/web/index.html`: a chat with bubbles, tool-call chips, and `[Yes/No]` approval, in vanilla JS with no build step.
 
 Try it: run `npm run web`, open `http://127.0.0.1:3003`, and confirm two tabs share the same live conversation.
+
+## Phase 7: Test Coverage, Mock Provider, and Friendly Errors
+
+**Key concept:** the project had zero tests up to this point. `MockProvider` (a scripted `Provider` implementation) lets the `Agent` loop be exercised without a real API call — and once you're testing the loop directly, it's the right moment to also fix how it reports the *expected* failure modes a real user hits often: a missing API key, or Ctrl+C.
+
+- `src/provider/mock.ts`: `MockProvider` returns a scripted sequence of responses and records every call it received, so tests can assert on both the `Agent`'s return value and exactly what it sent back to the provider.
+- Tests (`node:test`, run via `npm test`) cover the `Agent` loop (a plain reply, a tool call round-trip, a denied confirmation, and `maxTurns` being exceeded), `ToolRegistry.execute` with malformed/invalid input, and the compaction strategies (`SlidingWindow`, `safeSplitPoint`, `estimateTokens`).
+- `src/errors.ts`: a `ConfigError` class plus a shared `reportFatal()` used by all three entry points — an expected, user-actionable problem (missing API key, unknown provider) now prints one clean line instead of a full stack trace; anything else still shows the full trace, since that's what you want while debugging a real bug.
+- `index.ts` and `tui.tsx` now handle Ctrl+C gracefully (closing any MCP clients and printing a `Bye!`), matching what `server.ts` already did from Phase 6.
+
+Try it: run `npm test` (all green); then run `npm start` without an `ANTHROPIC_API_KEY`/`OPENROUTER_API_KEY` set anywhere and confirm you get one clear line telling you what to do, not a stack trace; then press Ctrl+C mid-session and confirm you get a `Bye!` instead of an abrupt kill.
 
 More phases land here as the project grows — see the commit history for the full progression.
