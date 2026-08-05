@@ -8,6 +8,7 @@ import { stdin, stdout } from "node:process";
 import { Agent } from "./agent.js";
 import { runCommand } from "./commands.js";
 import { buildCompactor } from "./context/compactor.js";
+import { buildWriteDiff } from "./tools/diff.js";
 import { reportFatal } from "./errors.js";
 import { harnessConfig } from "./harness-config.js";
 import { loadConfig, registerMCPServers } from "./mcp/register.js";
@@ -51,7 +52,10 @@ async function main() {
     onToolCall: (name, rawInput) => console.log(`[tool] ${name} ${rawInput}`),
     onAssistantText: (text) => console.log(text),
     confirm: async (name, rawInput) => {
-      const answer = await rl.question(`  approve "${name}" ${rawInput}? [y/N] `);
+      const diff = name === "write_file" ? buildWriteDiff(rawInput) : "";
+      const answer = diff
+        ? await rl.question(`${diff}\n  approve this write? [y/N] `)
+        : await rl.question(`  approve "${name}" ${rawInput}? [y/N] `);
       return /^y(es)?$/i.test(answer.trim());
     },
   });

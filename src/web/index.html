@@ -153,7 +153,7 @@
     background: var(--assistant);
   }
   #approvalBox.show { display: flex; }
-  #approvalText { flex: 1; font-family: ui-monospace, monospace; font-size: 0.8rem; overflow-wrap: anywhere; }
+  #approvalText { flex: 1; font-family: ui-monospace, monospace; font-size: 0.8rem; overflow-wrap: anywhere; white-space: pre-wrap; }
   #approvalBox button.no { background: #6b7280; }
 </style>
 </head>
@@ -299,7 +299,9 @@
           break;
         case "confirm_request":
           pendingApproval = true;
-          approvalText.textContent = `approve "${msg.name}" ${truncate(msg.input, 160)}?`;
+          approvalText.textContent = msg.diff
+            ? `${msg.diff}\napprove this write?`
+            : `approve "${msg.name}" ${truncate(msg.input, 160)}?`;
           setMode("approval");
           break;
         case "mode":

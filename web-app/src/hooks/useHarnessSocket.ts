@@ -19,6 +19,7 @@ export interface FeedItem {
 export interface PendingApproval {
   name: string;
   input: string;
+  diff?: string;
 }
 
 const MAX_RECONNECT_DELAY_MS = 10_000;
@@ -106,7 +107,7 @@ export function useHarnessSocket() {
             ]);
             break;
           case "confirm_request":
-            setPendingApproval({ name: msg.name, input: msg.input });
+            setPendingApproval({ name: msg.name, input: msg.input, diff: msg.diff });
             setMode("approval");
             break;
           case "mode":

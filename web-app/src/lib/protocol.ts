@@ -21,7 +21,7 @@ export type ServerMessage =
   | { type: "user_text"; text: string }
   | { type: "assistant_text"; text: string }
   | { type: "tool_call"; name: string; input: string }
-  | { type: "confirm_request"; name: string; input: string }
+  | { type: "confirm_request"; name: string; input: string; diff?: string }
   | { type: "mode"; mode: "thinking" | "idle" }
   | { type: "error"; message: string }
   | { type: "command_output"; text: string };

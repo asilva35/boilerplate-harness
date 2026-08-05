@@ -17,6 +17,7 @@
   "dependencies": {
     "@anthropic-ai/sdk": "^0.32.1",
     "@modelcontextprotocol/sdk": "^1.30.0",
+    "diff": "^9.0.0",
     "ink": "^7.1.1",
     "openai": "^4.68.4",
     "react": "^19.2.8",

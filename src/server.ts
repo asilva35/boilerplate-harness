@@ -26,6 +26,7 @@ import { WebSocketServer, type WebSocket } from "ws";
 import { Agent } from "./agent.js";
 import { runCommand } from "./commands.js";
 import { buildCompactor } from "./context/compactor.js";
+import { buildWriteDiff } from "./tools/diff.js";
 import { reportFatal } from "./errors.js";
 import { harnessConfig } from "./harness-config.js";
 import { loadConfig, registerMCPServers } from "./mcp/register.js";
@@ -58,7 +59,7 @@ type ServerMessage =
   | { type: "user_text"; text: string }
   | { type: "assistant_text"; text: string }
   | { type: "tool_call"; name: string; input: string }
-  | { type: "confirm_request"; name: string; input: string }
+  | { type: "confirm_request"; name: string; input: string; diff?: string }
   | { type: "mode"; mode: "thinking" | "idle" }
   | { type: "error"; message: string }
   | { type: "command_output"; text: string };
@@ -136,7 +137,8 @@ async function main() {
     confirm: (name, rawInput) =>
       new Promise<boolean>((resolve) => {
         pendingApproval = { resolve };
-        broadcast({ type: "confirm_request", name, input: rawInput });
+        const diff = name === "write_file" ? buildWriteDiff(rawInput) : "";
+        broadcast({ type: "confirm_request", name, input: rawInput, diff: diff || undefined });
       }),
   });
 

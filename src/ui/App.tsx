@@ -23,6 +23,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Box, Text, useApp, useInput } from "ink";
 import type { Agent } from "../agent.js";
 import { runCommand } from "../commands.js";
+import { buildWriteDiff } from "../tools/diff.js";
 import { InputLine } from "./InputLine.js";
 import { Spinner } from "./Spinner.js";
 
@@ -48,7 +49,13 @@ export function App({ agent, registerConfirm }: AppProps) {
     registerConfirm(
       (name, rawInput) =>
         new Promise<boolean>((resolve) => {
-          console.log(`  approve "${name}" ${rawInput}? [y/N]`);
+          const diff = name === "write_file" ? buildWriteDiff(rawInput) : "";
+          if (diff) {
+            console.log(diff);
+            console.log("  approve this write? [y/N]");
+          } else {
+            console.log(`  approve "${name}" ${rawInput}? [y/N]`);
+          }
           pendingApproval.current = { resolve };
           setMode("approval");
         }),
