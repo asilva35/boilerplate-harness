@@ -15,6 +15,7 @@
 
 import OpenAI from "openai";
 import { config } from "../config.js";
+import { harnessConfig } from "../harness-config.js";
 import type { Block, Message, Provider, Response, StopReason, ToolDef } from "./types.js";
 
 export class OpenRouterProvider implements Provider {
@@ -33,7 +34,7 @@ export class OpenRouterProvider implements Provider {
     const response = await this.client.chat.completions.create({
       model: this.model,
       max_tokens: config.maxTokens,
-      messages: [{ role: "system", content: config.systemPrompt }, ...toOpenAIMessages(messages)],
+      messages: [{ role: "system", content: harnessConfig.systemPrompt }, ...toOpenAIMessages(messages)],
       tools: tools.length ? tools.map(toOpenAITool) : undefined,
     });
 

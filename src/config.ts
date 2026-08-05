@@ -34,8 +34,4 @@ export const config = {
   llmProvider: process.env.LLM_PROVIDER || "anthropic",
   llmModel: process.env.LLM_MODEL ?? "",
   maxTokens: 8192,
-  systemPrompt:
-    "You are running inside a small, hackable coding-agent harness written " +
-    "in TypeScript, migrated from a Go original as a learning exercise in " +
-    "harness engineering. Be concise and helpful.",
 } as const;

@@ -4,6 +4,7 @@
 // config.systemPrompt), so "keeping it" is free — compaction only touches
 // the array of user/assistant turns.
 
+import type { HarnessConfig } from "../harness-config.js";
 import type { Message } from "../provider/types.js";
 
 export interface CompactionStrategy {
@@ -70,4 +71,13 @@ export class SlidingWindow implements CompactionStrategy {
     const split = safeSplitPoint(messages, messages.length - this.keepLast);
     return messages.slice(split);
   }
+}
+
+// Phase 8: builds the compactor an entry point should use from
+// harness.config.json's "compaction" field, replacing what used to be a
+// `new SlidingWindow(20, 4000)` hardcoded identically in all three entry
+// points.
+export function buildCompactor(cfg: HarnessConfig["compaction"]): CompactionStrategy {
+  if (cfg.strategy === "none") return new NoCompaction();
+  return new SlidingWindow(cfg.keepLast, cfg.tokenThreshold);
 }

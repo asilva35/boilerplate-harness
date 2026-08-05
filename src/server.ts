@@ -20,15 +20,14 @@ import path from "node:path";
 import { WebSocketServer, type WebSocket } from "ws";
 import { Agent } from "./agent.js";
 import { runCommand } from "./commands.js";
-import { SlidingWindow } from "./context/compactor.js";
+import { buildCompactor } from "./context/compactor.js";
 import { reportFatal } from "./errors.js";
+import { harnessConfig } from "./harness-config.js";
 import { loadConfig, registerMCPServers } from "./mcp/register.js";
 import type { MCPClient } from "./mcp/client.js";
 import { createProvider } from "./provider/index.js";
+import { registerCatalogTools } from "./tools/catalog.js";
 import { ToolRegistry } from "./tools/registry.js";
-import { bashTool } from "./tools/bash.js";
-import { readFileTool } from "./tools/read_file.js";
-import { writeFileTool } from "./tools/write_file.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const WEB_PORT = Number(process.env.WEB_PORT) || 3003;
@@ -55,9 +54,7 @@ async function main() {
   const provider = createProvider();
 
   const tools = new ToolRegistry();
-  tools.register(readFileTool);
-  tools.register(writeFileTool);
-  tools.register(bashTool);
+  registerCatalogTools(tools, harnessConfig.tools);
 
   let mcpClients: MCPClient[] = [];
   const mcpConfig = await loadConfig("mcp.json");
@@ -81,7 +78,7 @@ async function main() {
   const agent = new Agent({
     provider,
     tools,
-    compactor: new SlidingWindow(20, 4000),
+    compactor: buildCompactor(harnessConfig.compaction),
     onToolCall: (name, rawInput) => broadcast({ type: "tool_call", name, input: rawInput }),
     onAssistantText: (text) => broadcast({ type: "assistant_text", text }),
     confirm: (name, rawInput) =>

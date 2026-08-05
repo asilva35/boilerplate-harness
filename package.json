@@ -4,10 +4,12 @@
   "description": "Educational, progressive harness engineering boilerplate in TypeScript",
   "type": "module",
   "private": true,
+  "license": "MIT",
   "scripts": {
     "start": "tsx src/index.ts",
     "tui": "tsx src/tui.tsx",
     "web": "tsx src/server.ts",
+    "scaffold": "tsx scripts/scaffold.ts",
     "typecheck": "tsc --noEmit",
     "test": "tsx --test $(find src -name '*.test.ts')"
   },

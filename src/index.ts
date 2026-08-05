@@ -7,23 +7,20 @@ import * as readline from "node:readline/promises";
 import { stdin, stdout } from "node:process";
 import { Agent } from "./agent.js";
 import { runCommand } from "./commands.js";
-import { SlidingWindow } from "./context/compactor.js";
+import { buildCompactor } from "./context/compactor.js";
 import { reportFatal } from "./errors.js";
+import { harnessConfig } from "./harness-config.js";
 import { loadConfig, registerMCPServers } from "./mcp/register.js";
 import type { MCPClient } from "./mcp/client.js";
 import { createProvider } from "./provider/index.js";
+import { registerCatalogTools } from "./tools/catalog.js";
 import { ToolRegistry } from "./tools/registry.js";
-import { bashTool } from "./tools/bash.js";
-import { readFileTool } from "./tools/read_file.js";
-import { writeFileTool } from "./tools/write_file.js";
 
 async function main() {
   const provider = createProvider();
 
   const tools = new ToolRegistry();
-  tools.register(readFileTool);
-  tools.register(writeFileTool);
-  tools.register(bashTool);
+  registerCatalogTools(tools, harnessConfig.tools);
 
   // mcp.json is optional (gitignored, like in Go) — its absence is not an
   // error, it simply means there are no remote tools to register.
@@ -50,9 +47,7 @@ async function main() {
   const agent = new Agent({
     provider,
     tools,
-    // Trim as soon as we pass 20 messages, or sooner if the history already
-    // weighs ~4000 estimated tokens — whichever comes first.
-    compactor: new SlidingWindow(20, 4000),
+    compactor: buildCompactor(harnessConfig.compaction),
     onToolCall: (name, rawInput) => console.log(`[tool] ${name} ${rawInput}`),
     onAssistantText: (text) => console.log(text),
     confirm: async (name, rawInput) => {

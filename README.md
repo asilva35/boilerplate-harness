@@ -45,6 +45,31 @@ npm run typecheck   # tsc --noEmit
 npm test             # node:test, no API key needed
 ```
 
+## Configuration
+
+Two separate files, on purpose:
+
+- **`.env`** — secrets: API keys, which provider/model to use. Never committed.
+- **`harness.config.json`** — per-deployment behavior: system prompt, which local tools load, compaction tuning. **Committed**, like `vite.config.ts` — this is what you edit to turn this boilerplate into a different harness, instead of forking code.
+
+```jsonc
+{
+  "systemPrompt": "...",
+  "tools": ["read_file", "write_file", "bash"],
+  "compaction": { "strategy": "sliding", "keepLast": 20, "tokenThreshold": 4000 }
+}
+```
+
+`tools` names must match a key in `src/tools/catalog.ts`'s `TOOL_CATALOG`; an unknown name fails fast with a clear error instead of silently registering nothing. `compaction` is optional (defaults shown above); `"strategy": "none"` disables compaction entirely.
+
+## Scaffolding a new harness
+
+```sh
+npm run scaffold -- ../my-vertical-harness
+```
+
+Copies the core (everything except `harness.config.json` itself) into a new directory, then asks a couple of questions — system prompt, which tools to enable — and writes a fresh `harness.config.json` from the answers. No file in *this* repo is touched.
+
 ## Commands inside a session
 
 | Command | Effect |
@@ -70,6 +95,9 @@ Its tools show up alongside the local ones, under `"<server>_<tool>"`. By defaul
 ## Project structure
 
 ```
+harness.config.json        Per-deployment behavior: system prompt, tools, compaction (committed)
+scripts/
+└── scaffold.ts               Copies the core into a new project with a fresh harness.config.json
 src/
 ├── index.ts              Plain console REPL (entry point 1)
 ├── tui.tsx                Ink TUI REPL (entry point 2)
@@ -78,7 +106,8 @@ src/
 │   └── index.html            Static chat frontend (HTML/CSS/JS, no build)
 ├── agent.ts               Agent Loop: tool-use, permissions, compaction
 ├── commands.ts             "/" command registry
-├── config.ts               Environment variables
+├── config.ts               Environment variables (secrets, provider/model selection)
+├── harness-config.ts        Loads and validates harness.config.json
 ├── provider/                LLM abstraction layer
 │   ├── types.ts               Message, Block, ToolDef, Provider interface
 │   ├── anthropic.ts            Anthropic adapter
@@ -87,9 +116,10 @@ src/
 ├── tools/                    Tool registry and implementations
 │   ├── types.ts                 Tool interface (Zod schema)
 │   ├── registry.ts               ToolRegistry
+│   ├── catalog.ts                 Name → Tool map read by harness.config.json's "tools" list
 │   ├── bash.ts / read_file.ts / write_file.ts
 ├── context/
-│   └── compactor.ts           Compaction strategies (SlidingWindow, NoCompaction)
+│   └── compactor.ts           Compaction strategies (SlidingWindow, NoCompaction, buildCompactor)
 ├── mcp/                      Model Context Protocol integration
 │   ├── client.ts               MCP session wrapper (stdio / HTTP)
 │   └── register.ts              Loads mcp.json and registers remote tools
@@ -163,4 +193,20 @@ Try it: run `npm run web`, open `http://127.0.0.1:3003`, and confirm two tabs sh
 
 Try it: run `npm test` (all green); then run `npm start` without an `ANTHROPIC_API_KEY`/`OPENROUTER_API_KEY` set anywhere and confirm you get one clear line telling you what to do, not a stack trace; then press Ctrl+C mid-session and confirm you get a `Bye!` instead of an abrupt kill.
 
+## Phase 8: Boilerplate — Separating Core from Deployment Config
+
+**Key concept:** up to this point, building a *different* harness meant forking this repo and hand-editing the system prompt and tool registration in three separate entry points. From here on, the core (agent loop, providers, tools, compaction) is separate from what varies per deployment (system prompt, which tools load, compaction tuning) — one committed JSON file, not a fork.
+
+- `harness.config.json` (repo root, committed — see "Configuration" above): the only file a new harness needs to edit to behave differently.
+- `src/harness-config.ts`: loads and validates it with Zod, throwing the same `ConfigError` (Phase 7) for a missing file or a malformed one.
+- `src/tools/catalog.ts`: a name → `Tool` map (`TOOL_CATALOG`) and `registerCatalogTools()`, replacing the `tools.register(...)` calls that used to be duplicated identically in `index.ts`, `tui.tsx`, and `server.ts`.
+- `src/context/compactor.ts` gains `buildCompactor()`, replacing the `new SlidingWindow(20, 4000)` that was also duplicated in all three entry points.
+- `scripts/scaffold.ts` (`npm run scaffold`): copies the core into a new project and generates a fresh `harness.config.json` from a couple of prompts — same spirit as `npm create vite@latest`.
+
+Try it: run `npm run scaffold -- ../scaffold-test`, answer with a different system prompt and say no to the `bash` tool, then in that new directory run `npm install`, `cp .env.example .env` (with your key), and `npm start` — confirm the system prompt is different, `bash` is missing from the `tools:` line printed at startup, and `git status` in *this* repo is still clean.
+
 More phases land here as the project grows — see the commit history for the full progression.
+
+## License
+
+[MIT](LICENSE)

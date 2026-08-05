@@ -5,6 +5,7 @@
 
 import Anthropic from "@anthropic-ai/sdk";
 import { config } from "../config.js";
+import { harnessConfig } from "../harness-config.js";
 import type { Block, Message, Provider, Response, StopReason, ToolDef } from "./types.js";
 
 export class AnthropicProvider implements Provider {
@@ -20,7 +21,7 @@ export class AnthropicProvider implements Provider {
     const response = await this.client.messages.create({
       model: this.model,
       max_tokens: config.maxTokens,
-      system: config.systemPrompt,
+      system: harnessConfig.systemPrompt,
       messages: messages.map(toAnthropicMessage),
       tools: tools.length ? tools.map(toAnthropicTool) : undefined,
     });
