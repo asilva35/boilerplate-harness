@@ -96,6 +96,18 @@
     padding: 0.5rem 0.75rem;
     border-radius: 0.6rem;
   }
+  .command-bubble {
+    align-self: flex-start;
+    background: var(--assistant);
+    color: var(--muted);
+    font-family: ui-monospace, monospace;
+    font-size: 0.78rem;
+    white-space: pre-wrap;
+    padding: 0.35rem 0.65rem;
+    border-radius: 0.5rem;
+    max-width: 85%;
+    overflow-wrap: anywhere;
+  }
   footer {
     border-top: 1px solid var(--border);
     padding: 0.75rem 1rem;
@@ -210,6 +222,14 @@
     scrollToBottom();
   }
 
+  function addCommandBubble(text) {
+    const el = document.createElement("div");
+    el.className = "command-bubble";
+    el.textContent = text;
+    chat.appendChild(el);
+    scrollToBottom();
+  }
+
   function truncate(s, n) {
     return s.length <= n ? s : s.slice(0, n) + "…";
   }
@@ -288,6 +308,9 @@
           break;
         case "error":
           addErrorBubble("error: " + msg.message);
+          break;
+        case "command_output":
+          addCommandBubble(msg.text);
           break;
       }
     });

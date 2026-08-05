@@ -60,7 +60,8 @@ type ServerMessage =
   | { type: "tool_call"; name: string; input: string }
   | { type: "confirm_request"; name: string; input: string }
   | { type: "mode"; mode: "thinking" | "idle" }
-  | { type: "error"; message: string };
+  | { type: "error"; message: string }
+  | { type: "command_output"; text: string };
 
 // Messages client → server. `input` covers both normal messages and "/"
 // commands — the server dispatches them the same way index.ts does
@@ -184,7 +185,14 @@ async function main() {
         // answered, whether it's a "/" command or not.
         broadcast({ type: "user_text", text: line });
 
-        if (runCommand(line, { agent })) return;
+        if (
+          runCommand(line, {
+            agent,
+            log: (text) => broadcast({ type: "command_output", text }),
+            refreshHistory: () => broadcast({ type: "history", messages: agent.getMessages() }),
+          })
+        )
+          return;
 
         void (async () => {
           broadcast({ type: "mode", mode: "thinking" });

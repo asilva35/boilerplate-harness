@@ -48,6 +48,14 @@ function FeedRow({ item }: { item: FeedItem }) {
     );
   }
 
+  if (item.kind === "command") {
+    return (
+      <div className="w-fit max-w-[85%] self-start rounded-lg bg-muted px-2.5 py-1.5 font-mono text-xs break-words whitespace-pre-wrap text-muted-foreground">
+        {item.text}
+      </div>
+    );
+  }
+
   return (
     <div className="w-fit max-w-[85%] self-start rounded-lg bg-destructive/15 px-3 py-2 text-sm text-destructive">
       error: {item.text}

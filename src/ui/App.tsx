@@ -60,7 +60,7 @@ export function App({ agent, registerConfirm }: AppProps) {
       setHistory((h) => [...h, line]);
       console.log(`> ${line}`);
 
-      if (runCommand(line, { agent })) {
+      if (runCommand(line, { agent, log: console.log })) {
         console.log();
         return;
       }

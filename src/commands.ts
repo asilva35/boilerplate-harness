@@ -9,6 +9,20 @@ import type { Block } from "./provider/types.js";
 
 export interface CommandContext {
   agent: Agent;
+  // Command output used to just be console.log()'d directly - fine for
+  // index.ts (stdout) and tui.tsx (Ink intercepts console.log and prints
+  // it above the live UI), but server.ts's console.log never reaches the
+  // browser: it just prints on the machine running the server. Routing
+  // output through this callback lets each entry point decide where it
+  // goes (console.log, or a WebSocket broadcast).
+  log: (text: string) => void;
+  // Called by commands that mutate agent.getMessages() (/clear,
+  // /compact), *before* they log their confirmation. index.ts/tui.tsx
+  // don't need it (the terminal has nothing cached to refresh), but
+  // server.ts only ever pushes a "history" snapshot once, on connect - an
+  // already-open tab would otherwise keep showing stale messages after a
+  // command that changed them.
+  refreshHistory?: () => void;
 }
 
 type CommandHandler = (args: string, ctx: CommandContext) => void;
@@ -39,33 +53,36 @@ export function runCommand(line: string, ctx: CommandContext): boolean {
 
   const cmd = commands[name];
   if (!cmd) {
-    console.log(`unknown command: /${name} (try /help)`);
+    ctx.log(`unknown command: /${name} (try /help)`);
     return true;
   }
   cmd.run(args, ctx);
   return true;
 }
 
-function cmdHelp(): void {
-  console.log("available commands:");
+function cmdHelp(_args: string, ctx: CommandContext): void {
+  const lines = ["available commands:"];
   for (const [name, cmd] of Object.entries(commands)) {
     const display = (cmd.usage ?? `/${name}`).padEnd(22);
-    console.log(`  ${display} ${cmd.description}`);
+    lines.push(`  ${display} ${cmd.description}`);
   }
+  ctx.log(lines.join("\n"));
 }
 
 function cmdClear(_args: string, ctx: CommandContext): void {
   ctx.agent.clearMessages();
-  console.log("conversation reset");
+  ctx.refreshHistory?.();
+  ctx.log("conversation reset");
 }
 
 function cmdHistory(_args: string, ctx: CommandContext): void {
   const messages = ctx.agent.getMessages();
-  console.log(`${messages.length} messages in history:`);
+  const lines = [`${messages.length} messages in history:`];
   for (const m of messages) {
     const summary = m.content.map(summarizeBlock).join(" ");
-    console.log(`  [${m.role}] ${summary}`);
+    lines.push(`  [${m.role}] ${summary}`);
   }
+  ctx.log(lines.join("\n"));
 }
 
 function summarizeBlock(b: Block): string {
@@ -95,14 +112,15 @@ function cmdCompact(args: string, ctx: CommandContext): void {
       strategy = new NoCompaction();
       break;
     default:
-      console.log(`unknown strategy: ${args} (try sliding or none)`);
+      ctx.log(`unknown strategy: ${args} (try sliding or none)`);
       return;
   }
 
   const before = ctx.agent.getMessages();
   const compacted = strategy.compact(before);
   ctx.agent.setMessages(compacted);
-  console.log(`compacted: ${before.length} → ${compacted.length} messages`);
+  ctx.refreshHistory?.();
+  ctx.log(`compacted: ${before.length} → ${compacted.length} messages`);
 }
 
 // Same as cmdExit in Go (direct os.Exit(0), without propagating the signal

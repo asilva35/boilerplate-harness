@@ -23,7 +23,8 @@ export type ServerMessage =
   | { type: "tool_call"; name: string; input: string }
   | { type: "confirm_request"; name: string; input: string }
   | { type: "mode"; mode: "thinking" | "idle" }
-  | { type: "error"; message: string };
+  | { type: "error"; message: string }
+  | { type: "command_output"; text: string };
 
 export type ClientMessage = { type: "input"; line: string } | { type: "confirm_response"; approved: boolean };
 

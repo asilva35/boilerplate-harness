@@ -11,7 +11,7 @@ export type Mode = "idle" | "thinking" | "approval";
 
 export interface FeedItem {
   id: number;
-  kind: "bubble" | "chip" | "error";
+  kind: "bubble" | "chip" | "error" | "command";
   role?: "user" | "assistant";
   text: string;
 }
@@ -117,6 +117,9 @@ export function useHarnessSocket() {
             break;
           case "error":
             setFeed((prev) => [...prev, { id: nextId(), kind: "error", text: msg.message }]);
+            break;
+          case "command_output":
+            setFeed((prev) => [...prev, { id: nextId(), kind: "command", text: msg.text }]);
             break;
         }
       });

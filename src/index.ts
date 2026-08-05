@@ -71,7 +71,7 @@ async function main() {
     }
     if (!input.trim()) continue;
 
-    if (runCommand(input, { agent })) {
+    if (runCommand(input, { agent, log: console.log })) {
       console.log();
       continue;
     }
