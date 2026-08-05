@@ -40,6 +40,8 @@ Start with `npm start` if you're going through the code for the first time; it's
 
 `npm run web` starts an HTTP + WebSocket server **on `127.0.0.1` only** (never on the local network — `bash` and `write_file` must never be reachable from the outside) and serves a chat at `http://127.0.0.1:3003` (port configurable via `WEB_PORT`). It's a single, global session: every tab you open shares the same conversation, just like several windows of the same REPL.
 
+It serves the `web-app/` React + Vite + shadcn/ui build (see Phase 10 below) at `/` — build it once with `npm run web:build` (or `cd web-app && npm install && npm run build` the first time). The original no-build vanilla client from Phase 6 is still there, at `/legacy`.
+
 ```sh
 npm run typecheck   # tsc --noEmit
 npm test             # node:test, no API key needed
@@ -214,6 +216,17 @@ Try it: run `npm run scaffold -- ../scaffold-test`, answer with a different syst
 - Tests (`src/provider/retry.test.ts`) use a fake `APIError`-shaped object (no real SDK dependency) to assert: a `429` is retried and eventually resolves, `Retry-After` is respected over the blind backoff, a `5xx` and a connection error both retry, a `400` never retries, retries run out and propagate the last error, and an unrelated error without a `status` field is left alone.
 
 Try it: run `npm test` (all green, including the new retry tests); the practical end-to-end check is harder to trigger without a real rate limit, but `retry.test.ts` exercises the exact same `withRetry()` both providers call, using a scripted 429/5xx/connection-error sequence instead of mocking the HTTP layer directly.
+
+## Phase 10: Web UI with React + Vite + shadcn/ui
+
+**Key concept:** Phase 6 deliberately gave the browser client no build step — the "no magic" version to read first, same reasoning that kept `index.ts` untouched when `tui.tsx` (Ink) showed up in Phase 5. This phase adds a polished client on top **without touching the backend at all**: same WebSocket protocol (`history`, `user_text`, `assistant_text`, `tool_call`, `confirm_request`, `mode`, `error`), a new client speaking it. It lands early on purpose — every web phase after this (multi-session, dashboard, chat history, attachments) is much easier to build on components than by hand-rolling DOM again each time.
+
+- `web-app/`: its own Vite + React + TypeScript subproject (own `package.json`, own `node_modules`), scaffolded with `npm create vite@latest` and then `npx shadcn@latest init`. It has zero build-time dependency on the backend — `src/lib/protocol.ts` is a local copy of the wire types, not an import across the process boundary.
+- `src/hooks/useHarnessSocket.ts`: one hook holding the entire client-side protocol logic — connect, rebuild the feed from `history` on (re)connect, append one item per live event, and reconnect with the same doubling backoff (capped at 10s) the Phase 6 vanilla client used.
+- Components from shadcn/ui: `Badge` for the connection status, `ScrollArea` for the feed, `AlertDialog` for the Yes/No tool-approval prompt, `Textarea` (with native CSS `field-sizing: content` — no manual `scrollHeight` math needed anymore) + `Button` for the input row.
+- `src/server.ts`: serves `web-app/dist` (the Vite production build) at `/`, with a small static file server (path-traversal guarded, falls back to `index.html` for unknown paths). `/legacy` still serves the original Phase 6 `src/web/index.html` unchanged, as a "no magic" reference.
+
+Try it: `cd web-app && npm install && npm run build && cd ..` (or `npm run web:build` from the repo root), then `npm run web` and open `http://127.0.0.1:3003` — confirm the chat behaves exactly like the Phase 6 version (same history on reload, same tool-approval flow), now with shadcn/ui components; then check `http://127.0.0.1:3003/legacy` still shows the original vanilla client.
 
 More phases land here as the project grows — see the commit history for the full progression.
 

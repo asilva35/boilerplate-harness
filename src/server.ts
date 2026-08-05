@@ -12,8 +12,13 @@
 // Bind exclusively to 127.0.0.1: bash and write_file are tools capable of
 // altering the system; they must never be reachable from the local
 // network.
+//
+// Phase 10 swaps what's served at "/" for the built web-app/ (React +
+// Vite + shadcn/ui) client, without touching a single line of the
+// WebSocket protocol below — it's the same "sin magia" vanilla client
+// from Phase 6, still reachable at /legacy for reference.
 
-import { createServer } from "node:http";
+import { createServer, type ServerResponse } from "node:http";
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
@@ -31,6 +36,18 @@ import { ToolRegistry } from "./tools/registry.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const WEB_PORT = Number(process.env.WEB_PORT) || 3003;
+const WEB_APP_DIST = path.join(__dirname, "..", "web-app", "dist");
+const LEGACY_HTML_PATH = path.join(__dirname, "web", "index.html");
+
+const MIME_TYPES: Record<string, string> = {
+  ".html": "text/html; charset=utf-8",
+  ".js": "text/javascript; charset=utf-8",
+  ".css": "text/css; charset=utf-8",
+  ".svg": "image/svg+xml",
+  ".woff2": "font/woff2",
+  ".ico": "image/x-icon",
+  ".json": "application/json; charset=utf-8",
+};
 
 // Messages traveling server → client. `history` hydrates a new tab with
 // the conversation already in progress, reusing the same
@@ -49,6 +66,40 @@ type ServerMessage =
 // commands — the server dispatches them the same way index.ts does
 // (runCommand first, agent.send if it wasn't a command).
 type ClientMessage = { type: "input"; line: string } | { type: "confirm_response"; approved: boolean };
+
+// Serves the Phase 10 React build (web-app/dist). There's no client-side
+// router in this app, so an unmatched path only really matters for "/" -
+// falling back to index.html keeps the shape a real SPA route would need
+// if one gets added later.
+async function serveWebApp(url: string, res: ServerResponse): Promise<void> {
+  const urlPath = decodeURIComponent(url.split("?")[0] ?? "/");
+  const relativePath = urlPath === "/" ? "index.html" : urlPath.replace(/^\/+/, "");
+  const filePath = path.join(WEB_APP_DIST, relativePath);
+
+  // Path traversal guard (e.g. a request for "/../../etc/passwd").
+  if (filePath !== WEB_APP_DIST && !filePath.startsWith(WEB_APP_DIST + path.sep)) {
+    res.writeHead(403).end("forbidden");
+    return;
+  }
+
+  try {
+    const data = await readFile(filePath);
+    const mime = MIME_TYPES[path.extname(filePath)] ?? "application/octet-stream";
+    res.writeHead(200, { "content-type": mime }).end(data);
+  } catch {
+    try {
+      const html = await readFile(path.join(WEB_APP_DIST, "index.html"));
+      res.writeHead(200, { "content-type": "text/html; charset=utf-8" }).end(html);
+    } catch (err) {
+      res
+        .writeHead(500)
+        .end(
+          `error reading web-app/dist/index.html: ${(err as Error).message}\n\n` +
+            `Did you run "npm run build" inside web-app/?`,
+        );
+    }
+  }
+}
 
 async function main() {
   const provider = createProvider();
@@ -88,20 +139,20 @@ async function main() {
       }),
   });
 
-  const indexHtmlPath = path.join(__dirname, "web", "index.html");
-
   const httpServer = createServer((req, res) => {
-    if (req.method !== "GET" || (req.url !== "/" && req.url !== "/index.html")) {
+    if (req.method !== "GET") {
       res.writeHead(404).end("not found");
       return;
     }
-    readFile(indexHtmlPath)
-      .then((html) => {
-        res.writeHead(200, { "content-type": "text/html; charset=utf-8" }).end(html);
-      })
-      .catch((err) => {
-        res.writeHead(500).end(`error reading index.html: ${(err as Error).message}`);
-      });
+
+    if (req.url === "/legacy" || req.url === "/legacy/") {
+      readFile(LEGACY_HTML_PATH)
+        .then((html) => res.writeHead(200, { "content-type": "text/html; charset=utf-8" }).end(html))
+        .catch((err) => res.writeHead(500).end(`error reading web/index.html: ${(err as Error).message}`));
+      return;
+    }
+
+    void serveWebApp(req.url ?? "/", res);
   });
 
   const wss = new WebSocketServer({ server: httpServer });
