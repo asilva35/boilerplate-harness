@@ -16,6 +16,7 @@
 import OpenAI from "openai";
 import { config } from "../config.js";
 import { harnessConfig } from "../harness-config.js";
+import { withRetry } from "./retry.js";
 import type { Block, Message, Provider, Response, StopReason, ToolDef } from "./types.js";
 
 export class OpenRouterProvider implements Provider {
@@ -23,20 +24,25 @@ export class OpenRouterProvider implements Provider {
   model: string;
 
   constructor(model: string = "anthropic/claude-sonnet-4.6") {
+    // maxRetries: 0 - retry/backoff is owned by withRetry() (Phase 9)
+    // instead, so there's a single, testable place that decides it.
     this.client = new OpenAI({
       apiKey: config.openrouterApiKey,
       baseURL: "https://openrouter.ai/api/v1",
+      maxRetries: 0,
     });
     this.model = model;
   }
 
   async send(messages: Message[], tools: ToolDef[] = []): Promise<Response> {
-    const response = await this.client.chat.completions.create({
-      model: this.model,
-      max_tokens: config.maxTokens,
-      messages: [{ role: "system", content: harnessConfig.systemPrompt }, ...toOpenAIMessages(messages)],
-      tools: tools.length ? tools.map(toOpenAITool) : undefined,
-    });
+    const response = await withRetry(() =>
+      this.client.chat.completions.create({
+        model: this.model,
+        max_tokens: config.maxTokens,
+        messages: [{ role: "system", content: harnessConfig.systemPrompt }, ...toOpenAIMessages(messages)],
+        tools: tools.length ? tools.map(toOpenAITool) : undefined,
+      }),
+    );
 
     const choice = response.choices[0];
     const content: Block[] = [];

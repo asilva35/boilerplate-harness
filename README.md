@@ -205,6 +205,16 @@ Try it: run `npm test` (all green); then run `npm start` without an `ANTHROPIC_A
 
 Try it: run `npm run scaffold -- ../scaffold-test`, answer with a different system prompt and say no to the `bash` tool, then in that new directory run `npm install`, `cp .env.example .env` (with your key), and `npm start` — confirm the system prompt is different, `bash` is missing from the `tools:` line printed at startup, and `git status` in *this* repo is still clean.
 
+## Phase 9: Network Resilience (Retry/Backoff in Providers)
+
+**Key concept:** neither original provider (Go or the TS ports so far) retries anything — a `429`, a `5xx`, or a dropped connection just aborted the whole turn. Retrying transient failures with backoff is cheap, protective, and has no equivalent to migrate from Go, since Go never had it either.
+
+- `src/provider/retry.ts`: `withRetry(fn, { retries, baseDelayMs })`, a generic wrapper around any provider SDK call. It retries only transient errors — `429`, `5xx`, and connection failures (both SDKs represent those as an `APIError` with `status: undefined`, since no HTTP response was ever received) — and never a validation error like a `400`. When the provider sends a `Retry-After` header, that delay is used instead of the blind exponential backoff.
+- `anthropic.ts` and `openrouter.ts` both wrap their `.create()` call in `withRetry()`, and construct their SDK client with `maxRetries: 0` — the SDKs have their own built-in retry logic, but disabling it keeps retry/backoff owned by one single, testable place instead of two overlapping ones.
+- Tests (`src/provider/retry.test.ts`) use a fake `APIError`-shaped object (no real SDK dependency) to assert: a `429` is retried and eventually resolves, `Retry-After` is respected over the blind backoff, a `5xx` and a connection error both retry, a `400` never retries, retries run out and propagate the last error, and an unrelated error without a `status` field is left alone.
+
+Try it: run `npm test` (all green, including the new retry tests); the practical end-to-end check is harder to trigger without a real rate limit, but `retry.test.ts` exercises the exact same `withRetry()` both providers call, using a scripted 429/5xx/connection-error sequence instead of mocking the HTTP layer directly.
+
 More phases land here as the project grows — see the commit history for the full progression.
 
 ## License

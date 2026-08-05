@@ -6,6 +6,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { config } from "../config.js";
 import { harnessConfig } from "../harness-config.js";
+import { withRetry } from "./retry.js";
 import type { Block, Message, Provider, Response, StopReason, ToolDef } from "./types.js";
 
 export class AnthropicProvider implements Provider {
@@ -13,18 +14,22 @@ export class AnthropicProvider implements Provider {
   model: string;
 
   constructor(model: string = "claude-sonnet-4-6") {
-    this.client = new Anthropic({ apiKey: config.anthropicApiKey });
+    // maxRetries: 0 - retry/backoff is owned by withRetry() (Phase 9)
+    // instead, so there's a single, testable place that decides it.
+    this.client = new Anthropic({ apiKey: config.anthropicApiKey, maxRetries: 0 });
     this.model = model;
   }
 
   async send(messages: Message[], tools: ToolDef[] = []): Promise<Response> {
-    const response = await this.client.messages.create({
-      model: this.model,
-      max_tokens: config.maxTokens,
-      system: harnessConfig.systemPrompt,
-      messages: messages.map(toAnthropicMessage),
-      tools: tools.length ? tools.map(toAnthropicTool) : undefined,
-    });
+    const response = await withRetry(() =>
+      this.client.messages.create({
+        model: this.model,
+        max_tokens: config.maxTokens,
+        system: harnessConfig.systemPrompt,
+        messages: messages.map(toAnthropicMessage),
+        tools: tools.length ? tools.map(toAnthropicTool) : undefined,
+      }),
+    );
 
     const content: Block[] = [];
     for (const block of response.content) {
