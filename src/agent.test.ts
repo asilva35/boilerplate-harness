@@ -91,6 +91,26 @@ test("a denied confirmation short-circuits the tool call", async () => {
   ]);
 });
 
+test("streams text via onTextDelta and still fires onAssistantText once with the full text at the end", async () => {
+  const provider = new MockProvider([
+    { content: [{ type: "text", text: "hello there" }], stopReason: "end_turn", textDeltas: ["hel", "lo ", "there"] },
+  ]);
+  const deltas: string[] = [];
+  const finals: string[] = [];
+  const agent = new Agent({
+    provider,
+    tools: registryWith(),
+    onTextDelta: (chunk) => deltas.push(chunk),
+    onAssistantText: (text) => finals.push(text),
+  });
+
+  const result = await agent.send("hi");
+
+  assert.equal(result, "hello there");
+  assert.deepEqual(deltas, ["hel", "lo ", "there"]);
+  assert.deepEqual(finals, ["hello there"]);
+});
+
 test("throws once maxTurns is exceeded without ever contacting a real provider", async () => {
   const provider = new MockProvider(
     Array.from({ length: 5 }, () => ({

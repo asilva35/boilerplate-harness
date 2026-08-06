@@ -58,6 +58,7 @@ type ServerMessage =
   | { type: "history"; messages: ReturnType<Agent["getMessages"]> }
   | { type: "user_text"; text: string }
   | { type: "assistant_text"; text: string }
+  | { type: "text_delta"; text: string }
   | { type: "tool_call"; name: string; input: string }
   | { type: "confirm_request"; name: string; input: string; diff?: string }
   | { type: "mode"; mode: "thinking" | "idle" }
@@ -134,6 +135,7 @@ async function main() {
     compactor: buildCompactor(harnessConfig.compaction),
     onToolCall: (name, rawInput) => broadcast({ type: "tool_call", name, input: rawInput }),
     onAssistantText: (text) => broadcast({ type: "assistant_text", text }),
+    onTextDelta: (chunk) => broadcast({ type: "text_delta", text: chunk }),
     confirm: (name, rawInput) =>
       new Promise<boolean>((resolve) => {
         pendingApproval = { resolve };

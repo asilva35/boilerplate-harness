@@ -6,9 +6,14 @@ import type { FeedItem } from "@/hooks/useHarnessSocket";
 export function ChatFeed({ items }: { items: FeedItem[] }) {
   const bottomRef = useRef<HTMLDivElement>(null);
 
+  // Depends on `items` itself, not items.length: a streaming bubble grows
+  // in place (text_delta chunks update an existing item, see
+  // useHarnessSocket.ts) without changing the array's length, but setFeed
+  // always produces a new array reference, so this still re-fires on every
+  // chunk.
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ block: "end" });
-  }, [items.length]);
+  }, [items]);
 
   return (
     <ScrollArea className="min-h-0 flex-1">

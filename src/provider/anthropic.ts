@@ -20,16 +20,28 @@ export class AnthropicProvider implements Provider {
     this.model = model;
   }
 
-  async send(messages: Message[], tools: ToolDef[] = []): Promise<Response> {
-    const response = await withRetry(() =>
-      this.client.messages.create({
+  async send(messages: Message[], tools: ToolDef[] = [], onTextDelta?: (chunk: string) => void): Promise<Response> {
+    // client.messages.stream() only ever streams the "text" event for text
+    // content - a tool_use's input arrives as fragmented raw JSON
+    // (inputJson events) that isn't valid to parse until complete, so
+    // finalMessage() is still what we build tool_use blocks from below.
+    //
+    // Retrying (Phase 9) re-runs this whole function, including opening a
+    // brand new stream - if a connection drops mid-stream after some text
+    // already reached onTextDelta, a retry can replay part of that text a
+    // second time. Rare in practice (retries only trigger on 429/5xx/
+    // connection errors), and simpler than reconciling partial streams.
+    const response = await withRetry(() => {
+      const stream = this.client.messages.stream({
         model: this.model,
         max_tokens: config.maxTokens,
         system: harnessConfig.systemPrompt,
         messages: messages.map(toAnthropicMessage),
         tools: tools.length ? tools.map(toAnthropicTool) : undefined,
-      }),
-    );
+      });
+      if (onTextDelta) stream.on("text", onTextDelta);
+      return stream.finalMessage();
+    });
 
     const content: Block[] = [];
     for (const block of response.content) {

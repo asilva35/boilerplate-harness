@@ -204,6 +204,7 @@
     row.appendChild(bubble);
     chat.appendChild(row);
     scrollToBottom();
+    return bubble;
   }
 
   function addChip(text) {
@@ -261,6 +262,10 @@
   }
 
   let pendingApproval = null;
+  // The bubble currently being filled in by text_delta chunks - appended
+  // to on each chunk, replaced with the authoritative full text once
+  // assistant_text finalizes the block. null when nothing is streaming.
+  let currentStreamBubble = null;
 
   function connect() {
     const proto = location.protocol === "https:" ? "wss://" : "ws://";
@@ -285,14 +290,25 @@
       const msg = JSON.parse(event.data);
       switch (msg.type) {
         case "history":
+          currentStreamBubble = null;
           renderHistory(msg.messages);
           setMode("idle");
           break;
         case "user_text":
           addBubble("user", msg.text);
           break;
+        case "text_delta":
+          if (!currentStreamBubble) currentStreamBubble = addBubble("assistant", "");
+          currentStreamBubble.textContent += msg.text;
+          scrollToBottom();
+          break;
         case "assistant_text":
-          addBubble("assistant", msg.text);
+          if (currentStreamBubble) {
+            currentStreamBubble.textContent = msg.text;
+            currentStreamBubble = null;
+          } else {
+            addBubble("assistant", msg.text);
+          }
           break;
         case "tool_call":
           addChip(`🔧 ${msg.name} ${truncate(msg.input, 200)}`);

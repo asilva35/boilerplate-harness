@@ -34,31 +34,57 @@ export class OpenRouterProvider implements Provider {
     this.model = model;
   }
 
-  async send(messages: Message[], tools: ToolDef[] = []): Promise<Response> {
-    const response = await withRetry(() =>
-      this.client.chat.completions.create({
-        model: this.model,
-        max_tokens: config.maxTokens,
-        messages: [{ role: "system", content: harnessConfig.systemPrompt }, ...toOpenAIMessages(messages)],
-        tools: tools.length ? tools.map(toOpenAITool) : undefined,
-      }),
-    );
+  // Retrying (Phase 9) re-opens the stream from scratch - see the same
+  // caveat noted in anthropic.ts about a dropped connection potentially
+  // replaying already-emitted text through onTextDelta on retry.
+  async send(messages: Message[], tools: ToolDef[] = [], onTextDelta?: (chunk: string) => void): Promise<Response> {
+    return withRetry(() => this.streamOnce(messages, tools, onTextDelta));
+  }
 
-    const choice = response.choices[0];
+  private async streamOnce(
+    messages: Message[],
+    tools: ToolDef[],
+    onTextDelta?: (chunk: string) => void,
+  ): Promise<Response> {
+    const stream = await this.client.chat.completions.create({
+      model: this.model,
+      max_tokens: config.maxTokens,
+      messages: [{ role: "system", content: harnessConfig.systemPrompt }, ...toOpenAIMessages(messages)],
+      tools: tools.length ? tools.map(toOpenAITool) : undefined,
+      stream: true,
+    });
+
+    let text = "";
+    // Unlike Anthropic's single tool_use block, OpenAI's tool_calls arrive
+    // as an array where each entry's `index` fragments in over many chunks
+    // (id in one, part of the name in another, argument JSON split across
+    // several) - accumulate per index, then flatten in order at the end.
+    const toolCalls = new Map<number, { id: string; name: string; args: string }>();
+    let finishReason: string | null | undefined;
+
+    for await (const chunk of stream) {
+      const delta = chunk.choices[0]?.delta;
+      if (delta?.content) {
+        text += delta.content;
+        onTextDelta?.(delta.content);
+      }
+      for (const call of delta?.tool_calls ?? []) {
+        const entry = toolCalls.get(call.index) ?? { id: "", name: "", args: "" };
+        if (call.id) entry.id = call.id;
+        if (call.function?.name) entry.name += call.function.name;
+        if (call.function?.arguments) entry.args += call.function.arguments;
+        toolCalls.set(call.index, entry);
+      }
+      if (chunk.choices[0]?.finish_reason) finishReason = chunk.choices[0].finish_reason;
+    }
+
     const content: Block[] = [];
-    if (choice?.message.content) {
-      content.push({ type: "text", text: choice.message.content });
-    }
-    for (const call of choice?.message.tool_calls ?? []) {
-      content.push({
-        type: "tool_use",
-        toolUseId: call.id,
-        toolName: call.function.name,
-        toolInput: call.function.arguments,
-      });
+    if (text) content.push({ type: "text", text });
+    for (const [, call] of [...toolCalls].sort(([a], [b]) => a - b)) {
+      content.push({ type: "tool_use", toolUseId: call.id, toolName: call.name, toolInput: call.args });
     }
 
-    return { content, stopReason: fromFinishReason(choice?.finish_reason) };
+    return { content, stopReason: fromFinishReason(finishReason) };
   }
 }
 

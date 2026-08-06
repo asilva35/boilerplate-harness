@@ -20,6 +20,7 @@ export type ServerMessage =
   | { type: "history"; messages: Message[] }
   | { type: "user_text"; text: string }
   | { type: "assistant_text"; text: string }
+  | { type: "text_delta"; text: string }
   | { type: "tool_call"; name: string; input: string }
   | { type: "confirm_request"; name: string; input: string; diff?: string }
   | { type: "mode"; mode: "thinking" | "idle" }

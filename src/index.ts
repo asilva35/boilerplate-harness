@@ -50,7 +50,12 @@ async function main() {
     tools,
     compactor: buildCompactor(harnessConfig.compaction),
     onToolCall: (name, rawInput) => console.log(`[tool] ${name} ${rawInput}`),
-    onAssistantText: (text) => console.log(text),
+    // The text itself already reached stdout progressively via
+    // onTextDelta below; onAssistantText firing (once, with the full
+    // text) just means that block is done, so this only needs to close
+    // out the line.
+    onAssistantText: () => console.log(),
+    onTextDelta: (chunk) => process.stdout.write(chunk),
     confirm: async (name, rawInput) => {
       const diff = name === "write_file" ? buildWriteDiff(rawInput) : "";
       const answer = diff

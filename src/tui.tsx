@@ -29,15 +29,23 @@ async function main() {
 
   // The real confirm is only wired up once App mounts (it needs React
   // state for the live [y/N] prompt). Until then, this bridge is the
-  // default value; registerConfirm replaces it exactly once.
+  // default value; registerConfirm replaces it exactly once. Same pattern
+  // for the two streaming bridges below - App owns the live-preview state,
+  // so onTextDelta/onAssistantText just forward into it.
   let confirmBridge: (name: string, rawInput: string) => Promise<boolean> = async () => true;
+  let textDeltaBridge: (chunk: string) => void = () => {};
+  let streamResetBridge: () => void = () => {};
 
   const agent = new Agent({
     provider,
     tools,
     compactor: buildCompactor(harnessConfig.compaction),
     onToolCall: (name, rawInput) => console.log(`[tool] ${name} ${rawInput}`),
-    onAssistantText: (text) => console.log(text),
+    onAssistantText: (text) => {
+      console.log(text);
+      streamResetBridge();
+    },
+    onTextDelta: (chunk) => textDeltaBridge(chunk),
     confirm: (name, rawInput) => confirmBridge(name, rawInput),
   });
 
@@ -50,6 +58,12 @@ async function main() {
       agent={agent}
       registerConfirm={(fn) => {
         confirmBridge = fn;
+      }}
+      registerTextDelta={(fn) => {
+        textDeltaBridge = fn;
+      }}
+      registerStreamReset={(fn) => {
+        streamResetBridge = fn;
       }}
     />,
   );

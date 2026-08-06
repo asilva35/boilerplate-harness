@@ -41,5 +41,9 @@ export interface Response {
 //   }
 export interface Provider {
   readonly model: string;
-  send(messages: Message[], tools?: ToolDef[]): Promise<Response>;
+  // onTextDelta (Phase 12): fires with each text chunk as it streams in,
+  // in addition to the full Response returned at the end - tool_use
+  // content never streams incrementally, it always arrives as complete
+  // JSON, so this only ever fires for text.
+  send(messages: Message[], tools?: ToolDef[], onTextDelta?: (chunk: string) => void): Promise<Response>;
 }

@@ -32,15 +32,57 @@ type Mode = "input" | "thinking" | "approval";
 export interface AppProps {
   agent: Agent;
   registerConfirm: (fn: (name: string, rawInput: string) => Promise<boolean>) => void;
+  registerTextDelta: (fn: (chunk: string) => void) => void;
+  registerStreamReset: (fn: () => void) => void;
 }
 
-export function App({ agent, registerConfirm }: AppProps) {
+// How often accumulated text-delta chunks get flushed into React state
+// while streaming - re-rendering on every single token would flicker the
+// terminal and add pointless work for a text delta the eye can't tell
+// apart from an occasional 60ms-batched update anyway.
+const STREAM_FLUSH_MS = 60;
+
+export function App({ agent, registerConfirm, registerTextDelta, registerStreamReset }: AppProps) {
   const { exit } = useApp();
   const [mode, setMode] = useState<Mode>("input");
   const [value, setValue] = useState("");
   const [history, setHistory] = useState<string[]>([]);
   const [historyIndex, setHistoryIndex] = useState<number | null>(null);
   const pendingApproval = useRef<{ resolve: (approved: boolean) => void } | null>(null);
+  const [streamingText, setStreamingText] = useState("");
+  const streamBufferRef = useRef("");
+  const flushTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const resetStream = useCallback(() => {
+    if (flushTimer.current) {
+      clearTimeout(flushTimer.current);
+      flushTimer.current = null;
+    }
+    streamBufferRef.current = "";
+    setStreamingText("");
+  }, []);
+
+  // Wires up the live streaming preview exactly once on mount, same
+  // pattern as registerConfirm below: onTextDelta appends into a ref
+  // (avoiding a re-render per token) and a trailing timer flushes it into
+  // state at most every STREAM_FLUSH_MS. registerStreamReset fires right
+  // when a text block finalizes (see onAssistantText in tui.tsx), so the
+  // preview clears instead of showing stale text once it's already been
+  // pushed to the real scrollback via console.log.
+  useEffect(() => {
+    registerTextDelta((chunk) => {
+      streamBufferRef.current += chunk;
+      if (flushTimer.current) return;
+      flushTimer.current = setTimeout(() => {
+        flushTimer.current = null;
+        setStreamingText(streamBufferRef.current);
+      }, STREAM_FLUSH_MS);
+    });
+  }, [registerTextDelta]);
+
+  useEffect(() => {
+    registerStreamReset(resetStream);
+  }, [registerStreamReset, resetStream]);
 
   // Wires up the agent's real confirm exactly once on mount — the same
   // moment Go assigns rootAgent.Confirm after building the Bubble Tea
@@ -73,16 +115,18 @@ export function App({ agent, registerConfirm }: AppProps) {
       }
 
       setMode("thinking");
+      resetStream();
       try {
         await agent.send(line);
       } catch (err) {
         console.error("error:", (err as Error).message);
       } finally {
         console.log();
+        resetStream();
         setMode("input");
       }
     },
-    [agent],
+    [agent, resetStream],
   );
 
   useInput((input, key) => {
@@ -146,7 +190,7 @@ export function App({ agent, registerConfirm }: AppProps) {
       {mode === "approval" ? (
         <Text dimColor>y/N </Text>
       ) : mode === "thinking" ? (
-        <Spinner label="thinking…" />
+        streamingText ? <Text>{streamingText}</Text> : <Spinner label="thinking…" />
       ) : (
         <InputLine prompt="> " value={value} active />
       )}

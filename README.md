@@ -219,7 +219,7 @@ Try it: run `npm test` (all green, including the new retry tests); the practical
 
 ## Phase 10: Web UI with React + Vite + shadcn/ui
 
-**Key concept:** Phase 6 deliberately gave the browser client no build step — the "no magic" version to read first, same reasoning that kept `index.ts` untouched when `tui.tsx` (Ink) showed up in Phase 5. This phase adds a polished client on top **without touching the backend at all**: same WebSocket protocol (`history`, `user_text`, `assistant_text`, `tool_call`, `confirm_request`, `mode`, `error`, `command_output`), a new client speaking it. It lands early on purpose — every web phase after this (multi-session, dashboard, chat history, attachments) is much easier to build on components than by hand-rolling DOM again each time.
+**Key concept:** Phase 6 deliberately gave the browser client no build step — the "no magic" version to read first, same reasoning that kept `index.ts` untouched when `tui.tsx` (Ink) showed up in Phase 5. This phase adds a polished client on top **without touching the backend at all**: same WebSocket protocol (`history`, `user_text`, `assistant_text`, `text_delta`, `tool_call`, `confirm_request`, `mode`, `error`, `command_output`), a new client speaking it. It lands early on purpose — every web phase after this (multi-session, dashboard, chat history, attachments) is much easier to build on components than by hand-rolling DOM again each time.
 
 - `web-app/`: its own Vite + React + TypeScript subproject (own `package.json`, own `node_modules`), scaffolded with `npm create vite@latest` and then `npx shadcn@latest init`. It has zero build-time dependency on the backend — `src/lib/protocol.ts` is a local copy of the wire types, not an import across the process boundary.
 - `src/hooks/useHarnessSocket.ts`: one hook holding the entire client-side protocol logic — connect, rebuild the feed from `history` on (re)connect, append one item per live event, and reconnect with the same doubling backoff (capped at 10s) the Phase 6 vanilla client used.
@@ -227,6 +227,26 @@ Try it: run `npm test` (all green, including the new retry tests); the practical
 - `src/server.ts`: serves `web-app/dist` (the Vite production build) at `/`, with a small static file server (path-traversal guarded, falls back to `index.html` for unknown paths). `/legacy` still serves the original Phase 6 `src/web/index.html` unchanged, as a "no magic" reference.
 
 Try it: `cd web-app && npm install && npm run build && cd ..` (or `npm run web:build` from the repo root), then `npm run web` and open `http://127.0.0.1:3003` — confirm the chat behaves exactly like the Phase 6 version (same history on reload, same tool-approval flow), now with shadcn/ui components; then check `http://127.0.0.1:3003/legacy` still shows the original vanilla client.
+
+## Phase 11: Diff Preview Before Approving Writes
+
+**Key concept:** approving a `write_file` call by reading its raw JSON input (a `path` and a wall of `content`) tells you almost nothing about what's actually about to change on disk. Showing a unified diff instead extends the Phase 3 permission gate with real context, no new gate needed.
+
+- `src/tools/diff.ts`: `buildWriteDiff(rawInput)` parses the tool's raw JSON input, reads the target file's current contents (or treats it as empty if it doesn't exist yet — `createTwoFilesPatch` already renders that as every line added, no separate "new file" code path needed), and returns a unified diff via the `diff` npm package. Identical proposed content is reported explicitly ("no changes...") instead of returning a blank diff.
+- All three entry points' `confirm` callback (`index.ts`, `App.tsx`, `server.ts`), plus the Phase 6 vanilla client at `/legacy`, show that diff instead of the raw input whenever the tool being approved is `write_file`.
+
+Try it: ask the agent to overwrite a file that already exists, and confirm the `[y/N]` prompt (in any of the three UIs) shows `-`/`+` lines instead of the raw JSON.
+
+## Phase 12: Streaming Responses
+
+**Key concept:** showing the model's text as it arrives instead of waiting for the full response. Tool calls can't really stream — the JSON input has to be complete before it's valid to execute — so this only changes how text is delivered, not how tools run.
+
+- `provider/anthropic.ts`: uses `client.messages.stream()` and its `text` event instead of `messages.create()`; `finalMessage()` still gives back the exact same shape `send()` returned before, so the rest of the harness (history, compaction) doesn't need to know streaming happened.
+- `provider/openrouter.ts`: `stream: true` on `chat.completions.create`, accumulating `tool_calls` by their `index` (name and argument JSON both arrive fragmented across chunks, at different times) into the same `Block[]` shape as the non-streaming response.
+- `agent.ts`: a new `onTextDelta(chunk)` callback fires per chunk; `onAssistantText(text)` is unchanged — it still fires once per finished text block, with the complete text, so history and compaction logic didn't need to change at all.
+- Each entry point uses it differently: `index.ts` is nearly free (`process.stdout.write(chunk)`); `App.tsx` (Ink) accumulates chunks into a ref and flushes them into React state at most every 60ms (`STREAM_FLUSH_MS`) to avoid re-rendering the terminal on every token, clearing the live preview once `onAssistantText` confirms that block already landed in the real scrollback; the React web UI and the `/legacy` vanilla client both update the in-progress assistant bubble in place per chunk, then replace it with the authoritative full text on `assistant_text`.
+
+Try it: ask for a long answer from the browser and watch the text grow inside the bubble progressively, instead of appearing all at once at the end.
 
 More phases land here as the project grows — see the commit history for the full progression.
 

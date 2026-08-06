@@ -33,6 +33,11 @@ export function useHarnessSocket() {
   const socketRef = useRef<WebSocket | null>(null);
   const reconnectDelayRef = useRef(1000);
   const nextIdRef = useRef(0);
+  // Tracks the feed item currently being filled in by text_delta chunks,
+  // so each chunk appends to it instead of creating a new bubble per
+  // token; assistant_text clears it once the block is done and replaces
+  // the accumulated text with the authoritative final version.
+  const streamingIdRef = useRef<number | null>(null);
 
   const nextId = useCallback(() => nextIdRef.current++, []);
 
@@ -91,14 +96,34 @@ export function useHarnessSocket() {
         const msg: ServerMessage = JSON.parse(event.data);
         switch (msg.type) {
           case "history":
+            streamingIdRef.current = null;
             renderHistory(msg.messages);
             setMode("idle");
             break;
           case "user_text":
             setFeed((prev) => [...prev, { id: nextId(), kind: "bubble", role: "user", text: msg.text }]);
             break;
+          case "text_delta":
+            setFeed((prev) => {
+              if (streamingIdRef.current === null) {
+                const id = nextId();
+                streamingIdRef.current = id;
+                return [...prev, { id, kind: "bubble", role: "assistant", text: msg.text }];
+              }
+              return prev.map((item) =>
+                item.id === streamingIdRef.current ? { ...item, text: item.text + msg.text } : item,
+              );
+            });
+            break;
           case "assistant_text":
-            setFeed((prev) => [...prev, { id: nextId(), kind: "bubble", role: "assistant", text: msg.text }]);
+            setFeed((prev) => {
+              const id = streamingIdRef.current;
+              if (id !== null) {
+                streamingIdRef.current = null;
+                return prev.map((item) => (item.id === id ? { ...item, text: msg.text } : item));
+              }
+              return [...prev, { id: nextId(), kind: "bubble", role: "assistant", text: msg.text }];
+            });
             break;
           case "tool_call":
             setFeed((prev) => [

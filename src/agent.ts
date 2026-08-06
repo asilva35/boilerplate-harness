@@ -24,6 +24,7 @@ export interface AgentOptions {
   maxTurns?: number;
   onToolCall?: (name: string, rawInput: string) => void;
   onAssistantText?: (text: string) => void;
+  onTextDelta?: (chunk: string) => void;
   confirm?: (name: string, rawInput: string) => Promise<boolean> | boolean;
   compactor?: CompactionStrategy;
 }
@@ -34,6 +35,7 @@ export class Agent {
   private readonly maxTurns: number;
   private readonly onToolCall?: (name: string, rawInput: string) => void;
   private readonly onAssistantText?: (text: string) => void;
+  private readonly onTextDelta?: (chunk: string) => void;
   private readonly confirm?: (name: string, rawInput: string) => Promise<boolean> | boolean;
   compactor: CompactionStrategy;
   private messages: Message[] = [];
@@ -44,6 +46,7 @@ export class Agent {
     this.maxTurns = opts.maxTurns ?? 20;
     this.onToolCall = opts.onToolCall;
     this.onAssistantText = opts.onAssistantText;
+    this.onTextDelta = opts.onTextDelta;
     this.confirm = opts.confirm;
     this.compactor = opts.compactor ?? new NoCompaction();
   }
@@ -76,7 +79,7 @@ export class Agent {
       }
       this.messages = compacted;
 
-      const response = await this.provider.send(this.messages, this.tools.definitions());
+      const response = await this.provider.send(this.messages, this.tools.definitions(), this.onTextDelta);
       this.messages.push({ role: "assistant", content: response.content });
 
       const toolResults: Block[] = [];
