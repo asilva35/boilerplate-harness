@@ -16,6 +16,7 @@
 
 import { NoCompaction, type CompactionStrategy } from "./context/compactor.js";
 import type { Block, Message, Provider } from "./provider/types.js";
+import type { Risk } from "./tools/types.js";
 import type { ToolRegistry } from "./tools/registry.js";
 
 export interface AgentOptions {
@@ -31,6 +32,11 @@ export interface AgentOptions {
   onToolCall?: (name: string, rawInput: string) => void;
   onAssistantText?: (text: string) => void;
   onTextDelta?: (chunk: string) => void;
+  // Phase 18: fires only for risk "low"/"high" (never "none" - most tool
+  // calls have nothing to flag, and firing on every one would bury the
+  // signal it's meant to surface). Entry points wire this to something
+  // visually distinct from the normal tool-call/result flow.
+  onRiskFlag?: (toolName: string, risk: Risk, nextRecommended?: string) => void;
   confirm?: (name: string, rawInput: string) => Promise<boolean> | boolean;
   compactor?: CompactionStrategy;
 }
@@ -46,6 +52,7 @@ export class Agent {
   private readonly onToolCall?: (name: string, rawInput: string) => void;
   private readonly onAssistantText?: (text: string) => void;
   private readonly onTextDelta?: (chunk: string) => void;
+  private readonly onRiskFlag?: (toolName: string, risk: Risk, nextRecommended?: string) => void;
   private readonly confirm?: (name: string, rawInput: string) => Promise<boolean> | boolean;
   compactor: CompactionStrategy;
   private messages: Message[] = [];
@@ -58,6 +65,7 @@ export class Agent {
     this.onToolCall = opts.onToolCall;
     this.onAssistantText = opts.onAssistantText;
     this.onTextDelta = opts.onTextDelta;
+    this.onRiskFlag = opts.onRiskFlag;
     this.confirm = opts.confirm;
     this.compactor = opts.compactor ?? new NoCompaction();
   }
@@ -123,8 +131,23 @@ export class Agent {
             }
           }
 
-          const { result, isError } = await this.tools.execute(block.toolName, block.toolInput);
-          toolResults.push({ type: "tool_result", toolUseId: block.toolUseId, toolResult: result, isError });
+          const { result, isError, risk, nextRecommended } = await this.tools.execute(
+            block.toolName,
+            block.toolInput,
+          );
+
+          // Annotate the text that goes back to the model too (not just
+          // the side-channel callback below) - the root agent's own
+          // reasoning can only react to a risk flag if it's actually in
+          // its context, same "inform via text, don't hardcode control
+          // flow" approach the Phase 15 delegation heuristic already uses.
+          let toolResult = result;
+          if (risk && risk !== "none") {
+            this.onRiskFlag?.(block.toolName, risk, nextRecommended);
+            const next = nextRecommended ? ` next recommended: ${nextRecommended}` : "";
+            toolResult = `[risk: ${risk}]${next}\n${result}`;
+          }
+          toolResults.push({ type: "tool_result", toolUseId: block.toolUseId, toolResult, isError });
         }
       }
 

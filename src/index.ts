@@ -55,6 +55,7 @@ async function main() {
     // out the line.
     onAssistantText: () => console.log(),
     onTextDelta: (chunk) => process.stdout.write(chunk),
+    onRiskFlag: (name, risk, next) => console.log(`  ⚠ [${name}] risk: ${risk}${next ? ` — next: ${next}` : ""}`),
     confirm: async (name, rawInput) => {
       const diff = name === "write_file" ? buildWriteDiff(rawInput) : "";
       const answer = diff

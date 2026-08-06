@@ -9,9 +9,10 @@
 
 import { Agent } from "../agent.js";
 import type { Provider } from "../provider/types.js";
+import type { Risk } from "../tools/types.js";
 import { readFileTool } from "../tools/read_file.js";
 import { ToolRegistry } from "../tools/registry.js";
-import type { Subagent } from "./types.js";
+import type { Subagent, SubagentResult } from "./types.js";
 
 const SYSTEM_PROMPT = `You are a research subagent. Your job is to investigate the
 task you're given and return a concise, factual answer.
@@ -21,7 +22,38 @@ Rules:
   reads over scanning everything.
 - Return a short answer with the specific facts requested. No preamble.
 - If the answer requires a path or identifier, include it verbatim.
-- You have a limited number of tool calls; do not waste them.`;
+- You have a limited number of tool calls; do not waste them.
+
+End your answer with exactly these two lines, and nothing after them:
+
+RISK: none|low|high
+NEXT: <one short, concrete suggestion for what to do next, or "none">
+
+Use "high" only for something a human should see immediately - a hardcoded
+secret or credential, a destructive/irreversible pattern, a clear security
+hole. Use "low" for something worth a second look but not urgent. Almost
+every investigation is "none" - don't inflate the risk level to seem
+thorough.`;
+
+// Parses the trailing "RISK: ...\nNEXT: ..." lines the system prompt
+// above requires, same pattern as parseSummaryAndTags in
+// summarize-session.ts: a plain text convention instead of structured
+// output, since this subagent is a single agent.send() call with no
+// side-channel to report through.
+function parseRiskAndNext(text: string): SubagentResult {
+  const match = text.match(/\n?RISK:\s*(none|low|high)\s*\nNEXT:\s*(.*?)\s*$/i);
+  if (!match) return { text: text.trim() };
+
+  const [, riskRaw, nextRaw] = match;
+  const risk = riskRaw.toLowerCase() as Risk;
+  const next = nextRaw.trim();
+
+  return {
+    text: text.slice(0, match.index).trim(),
+    risk,
+    nextRecommended: next && next.toLowerCase() !== "none" ? next : undefined,
+  };
+}
 
 export class ResearchSubagent implements Subagent {
   readonly name = "research";
@@ -34,7 +66,7 @@ export class ResearchSubagent implements Subagent {
 
   constructor(private readonly provider: Provider) {}
 
-  async run(task: string): Promise<string> {
+  async run(task: string): Promise<SubagentResult> {
     const tools = new ToolRegistry();
     tools.register(readFileTool);
 
@@ -44,6 +76,7 @@ export class ResearchSubagent implements Subagent {
       systemPrompt: SYSTEM_PROMPT,
       maxTurns: 10,
     });
-    return agent.send(task);
+    const text = await agent.send(task);
+    return parseRiskAndNext(text);
   }
 }

@@ -96,6 +96,22 @@
     padding: 0.5rem 0.75rem;
     border-radius: 0.6rem;
   }
+  /* Full-width banner, not a small pill like .chip - Phase 18's whole
+     point is that this must not read as just another routine tool-call
+     chip a user would skim past. */
+  .risk-banner {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.5rem;
+    font-weight: 600;
+    font-size: 0.85rem;
+    padding: 0.55rem 0.75rem;
+    border-radius: 0.6rem;
+    border: 1px solid;
+    overflow-wrap: anywhere;
+  }
+  .risk-banner.low { background: var(--chip); color: var(--chip-text); border-color: var(--chip-text); }
+  .risk-banner.high { background: var(--error); color: var(--error-text); border-color: var(--error-text); }
   .command-bubble {
     align-self: flex-start;
     background: var(--assistant);
@@ -231,6 +247,14 @@
     scrollToBottom();
   }
 
+  function addRiskBanner(level, text) {
+    const el = document.createElement("div");
+    el.className = "risk-banner " + level;
+    el.textContent = "⚠ " + text;
+    chat.appendChild(el);
+    scrollToBottom();
+  }
+
   function truncate(s, n) {
     return s.length <= n ? s : s.slice(0, n) + "…";
   }
@@ -312,6 +336,10 @@
           break;
         case "tool_call":
           addChip(`🔧 ${msg.name} ${truncate(msg.input, 200)}`);
+          break;
+        case "risk_flag":
+          if (msg.risk === "none") break; // server never actually sends this, but stay defensive
+          addRiskBanner(msg.risk, `[${msg.name}] risk: ${msg.risk}${msg.nextRecommended ? ` — next: ${msg.nextRecommended}` : ""}`);
           break;
         case "confirm_request":
           pendingApproval = true;

@@ -61,6 +61,25 @@ function FeedRow({ item }: { item: FeedItem }) {
     );
   }
 
+  if (item.kind === "risk") {
+    // Deliberately a full-width banner, not a small pill like "chip" -
+    // Phase 18's whole point is that this must not read as just another
+    // routine tool-call chip a user would skim past.
+    return (
+      <div
+        className={cn(
+          "flex items-start gap-2 self-stretch rounded-lg border px-3 py-2 text-sm font-medium",
+          item.level === "high"
+            ? "border-destructive/40 bg-destructive/10 text-destructive"
+            : "border-amber-400/50 bg-amber-100 text-amber-900 dark:bg-amber-950 dark:text-amber-300",
+        )}
+      >
+        <span aria-hidden>⚠</span>
+        <span className="break-words">{item.text}</span>
+      </div>
+    );
+  }
+
   return (
     <div className="w-fit max-w-[85%] self-start rounded-lg bg-destructive/15 px-3 py-2 text-sm text-destructive">
       error: {item.text}

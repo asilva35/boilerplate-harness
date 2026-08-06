@@ -53,6 +53,7 @@ async function main() {
       streamResetBridge();
     },
     onTextDelta: (chunk) => textDeltaBridge(chunk),
+    onRiskFlag: (name, risk, next) => console.log(`  ⚠ [${name}] risk: ${risk}${next ? ` — next: ${next}` : ""}`),
     confirm: (name, rawInput) => confirmBridge(name, rawInput),
   });
 

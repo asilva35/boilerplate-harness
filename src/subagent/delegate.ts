@@ -8,6 +8,9 @@
 // project rules relevant to this task and digests them into a handful of
 // concrete rules, appended to the task text - the subagent still only
 // ever sees a `task: string`, never a raw skill document.
+//
+// Phase 18: maps the subagent's SubagentResult 1:1 into the ToolResult's
+// risk/nextRecommended envelope, instead of flattening it into plain text.
 
 import { z } from "zod";
 import type { Provider } from "../provider/types.js";
@@ -32,7 +35,8 @@ export function delegateTool(
     async execute({ task }): Promise<ToolResult> {
       const digest = await digestSkills(provider, skillRegistry.match(task), task);
       const augmentedTask = digest ? `${task}\n\nRelevant project rules:\n${digest}` : task;
-      return { result: await subagent.run(augmentedTask), isError: false };
+      const { text, risk, nextRecommended } = await subagent.run(augmentedTask);
+      return { result: text, isError: false, risk, nextRecommended };
     },
   };
 }

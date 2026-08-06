@@ -31,9 +31,19 @@
 import type { ZodType } from "zod";
 import type { ToolDef } from "../provider/types.js";
 
+// Phase 18: an optional structured "envelope" on top of the plain result
+// text. No tool is required to fill these in - most tools have nothing
+// risky to report - but subagents (Phase 14) and delegateTool should,
+// since a subagent's exploration is exactly the kind of thing that can
+// turn up something a human should see immediately instead of it staying
+// buried in prose.
+export type Risk = "none" | "low" | "high";
+
 export interface ToolResult {
   result: string;
   isError: boolean;
+  risk?: Risk;
+  nextRecommended?: string;
 }
 
 export interface Tool<TInput = any> {

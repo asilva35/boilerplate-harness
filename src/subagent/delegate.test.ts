@@ -13,7 +13,7 @@ function fakeSubagent(overrides: Partial<Subagent> = {}): Subagent {
   return {
     name: "research",
     description: "investigates things",
-    run: async (task) => `did: ${task}`,
+    run: async (task) => ({ text: `did: ${task}` }),
     ...overrides,
   };
 }
@@ -32,7 +32,25 @@ test("execute() runs the subagent with the given task and returns its result", a
 
   const result = await tool.execute({ task: "find the config file" });
 
-  assert.deepEqual(result, { result: "did: find the config file", isError: false });
+  assert.equal(result.result, "did: find the config file");
+  assert.equal(result.isError, false);
+  assert.equal(result.risk, undefined);
+});
+
+test("propagates the subagent's risk and nextRecommended into the ToolResult envelope", async () => {
+  const tool = delegateTool(
+    fakeSubagent({
+      run: async () => ({ text: "found a secret", risk: "high", nextRecommended: "rotate it immediately" }),
+    }),
+    new MockProvider([]),
+    noSkills,
+  );
+
+  const result = await tool.execute({ task: "audit for secrets" });
+
+  assert.equal(result.result, "found a secret");
+  assert.equal(result.risk, "high");
+  assert.equal(result.nextRecommended, "rotate it immediately");
 });
 
 test("with no matching skills, the subagent receives the task unchanged and no provider call happens", async () => {
@@ -42,7 +60,7 @@ test("with no matching skills, the subagent receives the task unchanged and no p
     fakeSubagent({
       run: async (task) => {
         receivedTask = task;
-        return "ok";
+        return { text: "ok" };
       },
     }),
     provider,
@@ -69,7 +87,7 @@ test("with a matching skill, the subagent receives the task augmented with diges
       fakeSubagent({
         run: async (task) => {
           receivedTask = task;
-          return "ok";
+          return { text: "ok" };
         },
       }),
       provider,

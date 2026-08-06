@@ -22,6 +22,7 @@ export type ServerMessage =
   | { type: "assistant_text"; text: string }
   | { type: "text_delta"; text: string }
   | { type: "tool_call"; name: string; input: string }
+  | { type: "risk_flag"; name: string; risk: "none" | "low" | "high"; nextRecommended?: string }
   | { type: "confirm_request"; name: string; input: string; diff?: string }
   | { type: "mode"; mode: "thinking" | "idle" }
   | { type: "error"; message: string }

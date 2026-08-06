@@ -35,6 +35,7 @@ import type { MCPClient } from "./mcp/client.js";
 import { createProvider } from "./provider/index.js";
 import { SkillRegistry } from "./skills/registry.js";
 import { registerCatalogTools } from "./tools/catalog.js";
+import type { Risk } from "./tools/types.js";
 import { ToolRegistry } from "./tools/registry.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -62,6 +63,7 @@ type ServerMessage =
   | { type: "assistant_text"; text: string }
   | { type: "text_delta"; text: string }
   | { type: "tool_call"; name: string; input: string }
+  | { type: "risk_flag"; name: string; risk: Risk; nextRecommended?: string }
   | { type: "confirm_request"; name: string; input: string; diff?: string }
   | { type: "mode"; mode: "thinking" | "idle" }
   | { type: "error"; message: string }
@@ -143,6 +145,7 @@ async function main() {
     onToolCall: (name, rawInput) => broadcast({ type: "tool_call", name, input: rawInput }),
     onAssistantText: (text) => broadcast({ type: "assistant_text", text }),
     onTextDelta: (chunk) => broadcast({ type: "text_delta", text: chunk }),
+    onRiskFlag: (name, risk, nextRecommended) => broadcast({ type: "risk_flag", name, risk, nextRecommended }),
     confirm: (name, rawInput) =>
       new Promise<boolean>((resolve) => {
         pendingApproval = { resolve };

@@ -24,7 +24,7 @@ test("only exposes read_file - never bash or write_file", async () => {
   assert.deepEqual(toolNames, ["read_file"]);
 });
 
-test("returns the subagent's final text", async () => {
+test("returns the subagent's final text, with no RISK/NEXT lines the result has no risk set", async () => {
   const provider = new MockProvider([
     { content: [{ type: "text", text: "the config lives at config/app.yaml" }], stopReason: "end_turn" },
   ]);
@@ -32,7 +32,53 @@ test("returns the subagent's final text", async () => {
 
   const result = await subagent.run("where is the config file?");
 
-  assert.equal(result, "the config lives at config/app.yaml");
+  assert.equal(result.text, "the config lives at config/app.yaml");
+  assert.equal(result.risk, undefined);
+  assert.equal(result.nextRecommended, undefined);
+});
+
+test("parses a trailing RISK: none / NEXT: none as no risk to report", async () => {
+  const provider = new MockProvider([
+    { content: [{ type: "text", text: "nothing unusual here.\n\nRISK: none\nNEXT: none" }], stopReason: "end_turn" },
+  ]);
+  const subagent = new ResearchSubagent(provider);
+
+  const result = await subagent.run("look around");
+
+  assert.equal(result.text, "nothing unusual here.");
+  assert.equal(result.risk, "none");
+  assert.equal(result.nextRecommended, undefined);
+});
+
+test("parses RISK: high and NEXT: <suggestion>, stripped out of the returned text", async () => {
+  const provider = new MockProvider([
+    {
+      content: [
+        {
+          type: "text",
+          text: "found a hardcoded API key in config/prod.ts.\n\nRISK: high\nNEXT: rotate the key and move it to an env var",
+        },
+      ],
+      stopReason: "end_turn",
+    },
+  ]);
+  const subagent = new ResearchSubagent(provider);
+
+  const result = await subagent.run("audit config files for secrets");
+
+  assert.equal(result.text, "found a hardcoded API key in config/prod.ts.");
+  assert.equal(result.risk, "high");
+  assert.equal(result.nextRecommended, "rotate the key and move it to an env var");
+});
+
+test("a reply with no RISK/NEXT lines at all (model didn't follow the format) returns the text as-is, no risk", async () => {
+  const provider = new MockProvider([{ content: [{ type: "text", text: "just a plain answer" }], stopReason: "end_turn" }]);
+  const subagent = new ResearchSubagent(provider);
+
+  const result = await subagent.run("a task");
+
+  assert.equal(result.text, "just a plain answer");
+  assert.equal(result.risk, undefined);
 });
 
 test("each run starts a fresh agent - no history carries over between calls", async () => {

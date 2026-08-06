@@ -129,6 +129,70 @@ test("streams text via onTextDelta and still fires onAssistantText once with the
   assert.deepEqual(finals, ["hello there"]);
 });
 
+function toolReturning(result: ToolResult): Tool<{ text: string }> {
+  return {
+    name: "flaggy",
+    description: "A tool whose result is scripted for the test.",
+    schema: z.object({ text: z.string() }),
+    execute: () => result,
+  };
+}
+
+test("onRiskFlag fires for risk 'high', and the text fed back to the provider is annotated with it", async () => {
+  const provider = new MockProvider([
+    {
+      content: [
+        { type: "tool_use", toolUseId: "1", toolName: "flaggy", toolInput: JSON.stringify({ text: "x" }) },
+      ],
+      stopReason: "tool_use",
+    },
+    { content: [{ type: "text", text: "done" }], stopReason: "end_turn" },
+  ]);
+  const flags: { name: string; risk: string; next?: string }[] = [];
+  const agent = new Agent({
+    provider,
+    tools: registryWith(
+      toolReturning({ result: "found a secret", isError: false, risk: "high", nextRecommended: "rotate it" }),
+    ),
+    onRiskFlag: (name, risk, nextRecommended) => flags.push({ name, risk, next: nextRecommended }),
+  });
+
+  await agent.send("audit for secrets");
+
+  assert.deepEqual(flags, [{ name: "flaggy", risk: "high", next: "rotate it" }]);
+  const secondCallMessages = provider.calls[1].messages;
+  const lastMessage = secondCallMessages[secondCallMessages.length - 1];
+  const toolResultBlock = lastMessage.content[0] as { toolResult: string };
+  assert.match(toolResultBlock.toolResult, /^\[risk: high\] next recommended: rotate it\nfound a secret$/);
+});
+
+test("onRiskFlag never fires for risk 'none' or an unset risk, and the text is passed through unannotated", async () => {
+  const provider = new MockProvider([
+    {
+      content: [
+        { type: "tool_use", toolUseId: "1", toolName: "flaggy", toolInput: JSON.stringify({ text: "x" }) },
+      ],
+      stopReason: "tool_use",
+    },
+    { content: [{ type: "text", text: "done" }], stopReason: "end_turn" },
+  ]);
+  const flags: unknown[] = [];
+  const agent = new Agent({
+    provider,
+    tools: registryWith(toolReturning({ result: "all clear", isError: false, risk: "none" })),
+    onRiskFlag: (...args) => flags.push(args),
+  });
+
+  await agent.send("check things");
+
+  assert.deepEqual(flags, []);
+  const secondCallMessages = provider.calls[1].messages;
+  const lastMessage = secondCallMessages[secondCallMessages.length - 1];
+  assert.deepEqual(lastMessage.content, [
+    { type: "tool_result", toolUseId: "1", toolResult: "all clear", isError: false },
+  ]);
+});
+
 test("throws once maxTurns is exceeded without ever contacting a real provider", async () => {
   const provider = new MockProvider(
     Array.from({ length: 5 }, () => ({

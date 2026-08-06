@@ -222,7 +222,7 @@ Try it: run `npm test` (all green, including the new retry tests); the practical
 
 ## Phase 10: Web UI with React + Vite + shadcn/ui
 
-**Key concept:** Phase 6 deliberately gave the browser client no build step — the "no magic" version to read first, same reasoning that kept `index.ts` untouched when `tui.tsx` (Ink) showed up in Phase 5. This phase adds a polished client on top **without touching the backend at all**: same WebSocket protocol (`history`, `user_text`, `assistant_text`, `text_delta`, `tool_call`, `confirm_request`, `mode`, `error`, `command_output`), a new client speaking it. It lands early on purpose — every web phase after this (multi-session, dashboard, chat history, attachments) is much easier to build on components than by hand-rolling DOM again each time.
+**Key concept:** Phase 6 deliberately gave the browser client no build step — the "no magic" version to read first, same reasoning that kept `index.ts` untouched when `tui.tsx` (Ink) showed up in Phase 5. This phase adds a polished client on top **without touching the backend at all**: same WebSocket protocol (`history`, `user_text`, `assistant_text`, `text_delta`, `tool_call`, `risk_flag`, `confirm_request`, `mode`, `error`, `command_output`), a new client speaking it. It lands early on purpose — every web phase after this (multi-session, dashboard, chat history, attachments) is much easier to build on components than by hand-rolling DOM again each time.
 
 - `web-app/`: its own Vite + React + TypeScript subproject (own `package.json`, own `node_modules`), scaffolded with `npm create vite@latest` and then `npx shadcn@latest init`. It has zero build-time dependency on the backend — `src/lib/protocol.ts` is a local copy of the wire types, not an import across the process boundary.
 - `src/hooks/useHarnessSocket.ts`: one hook holding the entire client-side protocol logic — connect, rebuild the feed from `history` on (re)connect, append one item per live event, and reconnect with the same doubling backoff (capped at 10s) the Phase 6 vanilla client used.
@@ -309,6 +309,19 @@ Try it: ask the agent to remember a preference, close the session (Ctrl+C or Ctr
 - `.harness/skills/typescript-strict-types.md`: the example skill from the migration guide's practical test (never use `any`, validate with Zod at trust boundaries, etc.). Unlike `.harness/sessions/` (Phase 16, gitignored - session content is user-specific), `.harness/skills/` is meant to be committed - it's project knowledge, not runtime state, so `.gitignore` was narrowed to just the memory paths.
 
 Try it: ask the root agent to delegate a TypeScript-related task to `delegate_research` (or anything that naturally routes there per the Phase 15 heuristic) and check the delegated task the subagent received - it should include the digested `typescript-strict-types` rules as a short bullet list, not the whole skill file.
+
+## Phase 18: Structured Result Contracts
+
+**Key concept:** another idea from Alan Buscaglia's video, not the Go original - a `ToolResult` today is just `{ result: string, isError: boolean }`, which is enough for simple tools but means a subagent that finds something concerning has no way to say so except burying it in prose the root might paraphrase away.
+
+- `src/tools/types.ts`: `ToolResult` gains two optional fields, additive and backward-compatible - `risk?: "none" | "low" | "high"` and `nextRecommended?: string`. No tool is required to fill them in.
+- `src/subagent/types.ts`: `Subagent.run()` now returns a `SubagentResult` (`text`, `risk?`, `nextRecommended?`) instead of a plain string, so a subagent can report the same envelope a `ToolResult` does.
+- `src/subagent/research.ts`: the subagent's own system prompt asks it to end every answer with `RISK: none|low|high` and `NEXT: <suggestion or "none">`, parsed back out of the plain text response - the same "structured signal via a text convention" approach `summarizeSession` (Phase 16) already uses for its `TAGS:` line, since a single `agent.send()` call has no other side channel to report through.
+- `src/subagent/delegate.ts`: `delegateTool()` maps the subagent's `risk`/`nextRecommended` straight into the `ToolResult` it returns.
+- `src/agent.ts`: the loop reads `risk` off every tool result. `risk: "none"` (by far the common case) is silent - firing on every call would bury the signal it's meant to surface. `"low"`/`"high"` do two things: fire a new `onRiskFlag(toolName, risk, nextRecommended)` callback (wired to something visually distinct in every entry point, see below), and prefix the text sent back to the model with `[risk: ...]` so the root agent's own reasoning can react to it too - same "inform via context instead of hardcoding control flow" approach the Phase 15 delegation heuristic already relies on.
+- Visibility per entry point: `index.ts`/`tui.tsx` print a `⚠ [name] risk: ...` line; `server.ts` broadcasts a new `risk_flag` protocol message; the React UI and the `/legacy` vanilla client both render it as a full-width banner (amber for `low`, destructive-red for `high`) instead of the small chip a routine tool call gets - the whole point is that it must not read as just another line to skim past.
+
+Try it: ask the root agent to have `delegate_research` investigate a file with something an actual reviewer would flag - a hardcoded credential works well - and confirm the risk shows up as its own distinct banner/line in whichever UI you're using, not just somewhere inside the assistant's prose.
 
 More phases land here as the project grows — see the commit history for the full progression.
 

@@ -11,9 +11,12 @@ export type Mode = "idle" | "thinking" | "approval";
 
 export interface FeedItem {
   id: number;
-  kind: "bubble" | "chip" | "error" | "command";
+  kind: "bubble" | "chip" | "error" | "command" | "risk";
   role?: "user" | "assistant";
   text: string;
+  // Only set for kind "risk" - styling varies by severity ("high" reads
+  // more urgent than "low"), unlike every other kind which has one look.
+  level?: "low" | "high";
 }
 
 export interface PendingApproval {
@@ -131,6 +134,20 @@ export function useHarnessSocket() {
               { id: nextId(), kind: "chip", text: `🔧 ${msg.name} ${truncate(msg.input, 200)}` },
             ]);
             break;
+          case "risk_flag": {
+            if (msg.risk === "none") break; // server never actually sends this, but stay defensive
+            const level = msg.risk; // narrow once, outside the closure below
+            setFeed((prev) => [
+              ...prev,
+              {
+                id: nextId(),
+                kind: "risk",
+                level,
+                text: `[${msg.name}] risk: ${level}${msg.nextRecommended ? ` — next: ${msg.nextRecommended}` : ""}`,
+              },
+            ]);
+            break;
+          }
           case "confirm_request":
             setPendingApproval({ name: msg.name, input: msg.input, diff: msg.diff });
             setMode("approval");
