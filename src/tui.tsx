@@ -12,6 +12,7 @@ import { createMemoryStore, finalizeSession } from "./memory/index.js";
 import { loadConfig, registerMCPServers } from "./mcp/register.js";
 import type { MCPClient } from "./mcp/client.js";
 import { createProvider } from "./provider/index.js";
+import { SkillRegistry } from "./skills/registry.js";
 import { registerCatalogTools } from "./tools/catalog.js";
 import { ToolRegistry } from "./tools/registry.js";
 import { App } from "./ui/App.js";
@@ -21,9 +22,10 @@ async function main() {
 
   const memorySession = await createMemoryStore();
   const systemPrompt = harnessConfig.systemPrompt + (await memorySession.store.preamble());
+  const skillRegistry = await SkillRegistry.load();
 
   const tools = new ToolRegistry();
-  registerCatalogTools(tools, harnessConfig.tools, provider, memorySession.store);
+  registerCatalogTools(tools, harnessConfig.tools, provider, memorySession.store, skillRegistry);
 
   let mcpClients: MCPClient[] = [];
   const mcpConfig = await loadConfig("mcp.json");

@@ -13,6 +13,7 @@
 import { ConfigError } from "../errors.js";
 import type { MemoryStore } from "../memory/types.js";
 import type { Provider } from "../provider/types.js";
+import type { SkillRegistry } from "../skills/registry.js";
 import { delegateTool } from "../subagent/delegate.js";
 import { ResearchSubagent } from "../subagent/research.js";
 import { SubagentRegistry } from "../subagent/registry.js";
@@ -70,10 +71,13 @@ export function registerCatalogTools(
   names: string[],
   provider: Provider,
   memoryStore: MemoryStore,
+  skillRegistry: SkillRegistry,
 ): void {
   const subagents = new SubagentRegistry();
   registerSubagents(subagents, provider);
-  const delegateTools = new Map<string, Tool>(subagents.all().map((s) => [`delegate_${s.name}`, delegateTool(s)]));
+  const delegateTools = new Map<string, Tool>(
+    subagents.all().map((s) => [`delegate_${s.name}`, delegateTool(s, provider, skillRegistry)]),
+  );
   const memoryTools = buildMemoryTools(memoryStore);
 
   for (const name of names) {

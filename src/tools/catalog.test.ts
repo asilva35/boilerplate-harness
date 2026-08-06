@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { NoMemory } from "../memory/no-memory.js";
 import { MockProvider } from "../provider/mock.js";
+import { SkillRegistry } from "../skills/registry.js";
 import { ConfigError } from "../errors.js";
 import { catalogToolNames, registerCatalogTools } from "./catalog.js";
 import { ToolRegistry } from "./registry.js";
@@ -19,8 +20,9 @@ test("registers delegate_research and remember when named in harness.config.json
   const registry = new ToolRegistry();
   const provider = new MockProvider([]);
   const memoryStore = new NoMemory();
+  const skillRegistry = new SkillRegistry([]);
 
-  registerCatalogTools(registry, ["read_file", "delegate_research", "remember"], provider, memoryStore);
+  registerCatalogTools(registry, ["read_file", "delegate_research", "remember"], provider, memoryStore, skillRegistry);
 
   const names = registry.definitions().map((t) => t.name);
   assert.deepEqual(names, ["delegate_research", "read_file", "remember"]); // definitions() sorts by name
@@ -30,9 +32,10 @@ test("an unknown tool name throws a ConfigError listing what's actually availabl
   const registry = new ToolRegistry();
   const provider = new MockProvider([]);
   const memoryStore = new NoMemory();
+  const skillRegistry = new SkillRegistry([]);
 
   assert.throws(
-    () => registerCatalogTools(registry, ["bogus_tool"], provider, memoryStore),
+    () => registerCatalogTools(registry, ["bogus_tool"], provider, memoryStore, skillRegistry),
     (err: unknown) => err instanceof ConfigError && /delegate_research/.test((err as Error).message),
   );
 });

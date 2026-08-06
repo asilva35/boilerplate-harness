@@ -124,6 +124,7 @@ src/
 │   └── compactor.ts           Compaction strategies (SlidingWindow, Summarize, NoCompaction, buildCompactor)
 ├── subagent/                  Delegation (Phase 14): Subagent, SubagentRegistry, delegateTool, ResearchSubagent
 ├── memory/                    Persistent memory (Phase 16): MemoryStore, SessionFiles, NoMemory, createMemoryStore
+├── skills/                    Skill registry (Phase 17): SkillRegistry, digestSkills, front-matter parsing
 ├── mcp/                      Model Context Protocol integration
 │   ├── client.ts               MCP session wrapper (stdio / HTTP)
 │   └── register.ts              Loads mcp.json and registers remote tools
@@ -296,6 +297,18 @@ Try it: ask for a one-line fix and confirm the agent handles it directly, no `de
 - Each entry point's system prompt becomes `harnessConfig.systemPrompt + await memoryStore.preamble()` at startup, and calls `finalizeSession()` in its shutdown path (`cleanup()` in `index.ts`/`tui.tsx`, the `SIGINT` handler in `server.ts`, since the web entry point's "one global session" model from Phase 6 already treats the whole server run as a single conversation).
 
 Try it: ask the agent to remember a preference, close the session (Ctrl+C or Ctrl+D), start it again, and check the system prompt already includes it under "Recent sessions" without asking for `recall` explicitly.
+
+## Phase 17: Skill Registry and Skill Digestion
+
+**Key concept:** an idea from Alan Buscaglia's "20 Agent Harnesses" video, not from the Go original - an index of "skills" (reusable knowledge: project conventions, domain checklists, business rules) the agent can discover, and instead of handing a subagent the full document, a "digestion" step compacts it into a handful of concrete, actionable rules for the specific task at hand.
+
+- `src/skills/front-matter.ts`: a small hand-rolled parser (no `gray-matter`/`js-yaml` dependency - skill front-matter here is two flat string fields, nothing a full YAML parser is needed for) that splits a `.md` file into its `---`-delimited front-matter and body.
+- `src/skills/registry.ts`: `SkillRegistry.load(".harness/skills")` scans that directory at startup and keeps a lightweight index (`name`, `trigger`, `path`) - the full content isn't read yet. A missing directory loads as an empty registry, not an error, same resilience as `.harness/` for memory (Phase 16) and `mcp.json` being optional (Phase 5). `match(task)` is a cheap local heuristic (does a significant word from a skill's `trigger` show up in the task text?), not an LLM call - it just shortlists candidates before the more expensive digestion step.
+- `src/skills/digest.ts`: `digestSkills(provider, matchedSkills, task)` reads the full body of whatever skills already matched and asks the provider to compact them into 3-5 concrete rules for that specific task. Best-effort throughout: zero matched skills means zero provider calls, and a failed read or provider call just means no rules get added - the subagent still gets the plain task, same as if nothing had matched.
+- `src/subagent/delegate.ts`: `delegateTool()` now digests before delegating - the subagent's `task` string arrives with `\n\nRelevant project rules:\n<digest>` appended when something matched, and unchanged otherwise. The `Subagent` interface itself doesn't change - it still only ever sees a `task: string`, never a raw skill document.
+- `.harness/skills/typescript-strict-types.md`: the example skill from the migration guide's practical test (never use `any`, validate with Zod at trust boundaries, etc.). Unlike `.harness/sessions/` (Phase 16, gitignored - session content is user-specific), `.harness/skills/` is meant to be committed - it's project knowledge, not runtime state, so `.gitignore` was narrowed to just the memory paths.
+
+Try it: ask the root agent to delegate a TypeScript-related task to `delegate_research` (or anything that naturally routes there per the Phase 15 heuristic) and check the delegated task the subagent received - it should include the digested `typescript-strict-types` rules as a short bullet list, not the whole skill file.
 
 More phases land here as the project grows — see the commit history for the full progression.
 
