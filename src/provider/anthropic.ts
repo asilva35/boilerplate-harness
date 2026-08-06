@@ -5,7 +5,6 @@
 
 import Anthropic from "@anthropic-ai/sdk";
 import { config } from "../config.js";
-import { harnessConfig } from "../harness-config.js";
 import { withRetry } from "./retry.js";
 import type { Block, Message, Provider, Response, StopReason, ToolDef } from "./types.js";
 
@@ -20,7 +19,12 @@ export class AnthropicProvider implements Provider {
     this.model = model;
   }
 
-  async send(messages: Message[], tools: ToolDef[] = [], onTextDelta?: (chunk: string) => void): Promise<Response> {
+  async send(
+    messages: Message[],
+    systemPrompt: string,
+    tools: ToolDef[] = [],
+    onTextDelta?: (chunk: string) => void,
+  ): Promise<Response> {
     // client.messages.stream() only ever streams the "text" event for text
     // content - a tool_use's input arrives as fragmented raw JSON
     // (inputJson events) that isn't valid to parse until complete, so
@@ -35,7 +39,7 @@ export class AnthropicProvider implements Provider {
       const stream = this.client.messages.stream({
         model: this.model,
         max_tokens: config.maxTokens,
-        system: harnessConfig.systemPrompt,
+        system: systemPrompt,
         messages: messages.map(toAnthropicMessage),
         tools: tools.length ? tools.map(toAnthropicTool) : undefined,
       });

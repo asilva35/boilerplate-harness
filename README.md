@@ -258,6 +258,20 @@ Try it: ask for a long answer from the browser and watch the text grow inside th
 
 Try it: have a long-ish conversation that mentions something concrete early on (a file path, a decision), run `/compact summarize`, and check `/history` — the synthetic summary message should still mention that detail even though the original message is gone.
 
+## Phase 14: Subagents (`delegate_<name>`)
+
+**Key concept:** delegation via tool-calling — a subagent is just another `Agent` instance, with its own system prompt, a trimmed-down tool subset, and its own turn budget, exposed to the root agent as one more callable tool.
+
+- `src/subagent/types.ts`: the `Subagent` interface (`name`, `description`, `run(task): Promise<string>`) — same shape as a tool, but backed by its own `Agent` and context window underneath.
+- `src/subagent/registry.ts`: `SubagentRegistry`, a `register()`/`all()` map analogous to `ToolRegistry`.
+- `src/subagent/delegate.ts`: `delegateTool(subagent)` wraps any `Subagent` as a `Tool` named `delegate_<name>`, with a single `task` parameter. A thrown error (e.g. the subagent hitting its own `maxTurns`) isn't caught here — `ToolRegistry.execute`'s own try/catch already turns it into an error `ToolResult`, so there's no need to duplicate that.
+- `src/subagent/research.ts`: the example subagent — `read_file` only (no `bash`, no `write_file`), `maxTurns: 10`, and a tight system prompt focused on investigating and answering concisely. Each `run()` builds a brand new `Agent` with a fresh `ToolRegistry` — no state carries over between calls.
+- `src/tools/catalog.ts`: subagents need a `Provider` to construct, unlike the static tools, so `registerCatalogTools()` now takes the provider too and builds `delegate_<name>` tools on demand instead of keeping them in the static catalog map.
+
+**A real bug found in the Go original, fixed here instead of ported:** Go's `Agent.System` field is set for subagents (`agent.New(r.Provider, researchSystem, r.Tools)`) but is never actually read anywhere in the codebase (confirmed with a repo-wide grep) — a subagent silently inherits whatever system prompt the shared `Provider` instance was constructed with, i.e. the root's. Since the migration guide's own entregable explicitly calls for a subagent with "su propio system prompt," this needed a real fix, not a faithful port of the bug: `Provider.send()` now takes `systemPrompt` as an explicit parameter instead of each provider reading `harnessConfig.systemPrompt` off a global singleton internally. `anthropic.ts` and `openrouter.ts` no longer import `harness-config.ts` at all. `Agent` gained a `systemPrompt` option (defaults to `""`); every entry point passes `harnessConfig.systemPrompt` for the root agent, while `ResearchSubagent` passes its own constant.
+
+Try it: ask the root agent something that requires investigating the filesystem (e.g. "where is X handled, and what does that file look like?") and confirm in the log/UI that `delegate_research` fired as its own sub-conversation, returning only the final text to the main thread.
+
 More phases land here as the project grows — see the commit history for the full progression.
 
 ## License

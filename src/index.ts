@@ -21,7 +21,7 @@ async function main() {
   const provider = createProvider();
 
   const tools = new ToolRegistry();
-  registerCatalogTools(tools, harnessConfig.tools);
+  registerCatalogTools(tools, harnessConfig.tools, provider);
 
   // mcp.json is optional (gitignored, like in Go) — its absence is not an
   // error, it simply means there are no remote tools to register.
@@ -48,6 +48,7 @@ async function main() {
   const agent = new Agent({
     provider,
     tools,
+    systemPrompt: harnessConfig.systemPrompt,
     compactor: buildCompactor(harnessConfig.compaction, provider),
     onToolCall: (name, rawInput) => console.log(`[tool] ${name} ${rawInput}`),
     // The text itself already reached stdout progressively via

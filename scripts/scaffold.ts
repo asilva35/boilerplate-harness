@@ -8,7 +8,7 @@ import { access, cp, mkdir, readdir, readFile, writeFile } from "node:fs/promise
 import path from "node:path";
 import * as readline from "node:readline/promises";
 import { stdin, stdout } from "node:process";
-import { TOOL_CATALOG } from "../src/tools/catalog.js";
+import { catalogToolNames } from "../src/tools/catalog.js";
 
 // Everything a scaffolded project needs, copied as-is. Deliberately
 // excludes harness.config.json (regenerated below from the prompts) and
@@ -45,7 +45,7 @@ async function main() {
   }
 
   const tools: string[] = [];
-  for (const name of Object.keys(TOOL_CATALOG)) {
+  for (const name of catalogToolNames()) {
     const answer = await rl.question(`Enable tool "${name}"? [Y/n] `);
     if (!/^n(o)?$/i.test(answer.trim())) tools.push(name);
   }

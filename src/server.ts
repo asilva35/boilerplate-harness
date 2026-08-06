@@ -108,7 +108,7 @@ async function main() {
   const provider = createProvider();
 
   const tools = new ToolRegistry();
-  registerCatalogTools(tools, harnessConfig.tools);
+  registerCatalogTools(tools, harnessConfig.tools, provider);
 
   let mcpClients: MCPClient[] = [];
   const mcpConfig = await loadConfig("mcp.json");
@@ -132,6 +132,7 @@ async function main() {
   const agent = new Agent({
     provider,
     tools,
+    systemPrompt: harnessConfig.systemPrompt,
     compactor: buildCompactor(harnessConfig.compaction, provider),
     onToolCall: (name, rawInput) => broadcast({ type: "tool_call", name, input: rawInput }),
     onAssistantText: (text) => broadcast({ type: "assistant_text", text }),

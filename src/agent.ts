@@ -21,6 +21,12 @@ import type { ToolRegistry } from "./tools/registry.js";
 export interface AgentOptions {
   provider: Provider;
   tools: ToolRegistry;
+  // Phase 14: defaults to "" (not harnessConfig.systemPrompt) - the Agent
+  // class deliberately doesn't know about harnessConfig, since a subagent
+  // needs its own, different system prompt through the same Provider.
+  // Entry points pass harnessConfig.systemPrompt explicitly for the root
+  // agent; subagents pass their own constant instead.
+  systemPrompt?: string;
   maxTurns?: number;
   onToolCall?: (name: string, rawInput: string) => void;
   onAssistantText?: (text: string) => void;
@@ -35,6 +41,7 @@ export class Agent {
   // below is already public for "/compact <strategy>" to read/replace it.
   readonly provider: Provider;
   private readonly tools: ToolRegistry;
+  private readonly systemPrompt: string;
   private readonly maxTurns: number;
   private readonly onToolCall?: (name: string, rawInput: string) => void;
   private readonly onAssistantText?: (text: string) => void;
@@ -46,6 +53,7 @@ export class Agent {
   constructor(opts: AgentOptions) {
     this.provider = opts.provider;
     this.tools = opts.tools;
+    this.systemPrompt = opts.systemPrompt ?? "";
     this.maxTurns = opts.maxTurns ?? 20;
     this.onToolCall = opts.onToolCall;
     this.onAssistantText = opts.onAssistantText;
@@ -82,7 +90,12 @@ export class Agent {
       }
       this.messages = compacted;
 
-      const response = await this.provider.send(this.messages, this.tools.definitions(), this.onTextDelta);
+      const response = await this.provider.send(
+        this.messages,
+        this.systemPrompt,
+        this.tools.definitions(),
+        this.onTextDelta,
+      );
       this.messages.push({ role: "assistant", content: response.content });
 
       const toolResults: Block[] = [];

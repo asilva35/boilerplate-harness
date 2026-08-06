@@ -15,7 +15,6 @@
 
 import OpenAI from "openai";
 import { config } from "../config.js";
-import { harnessConfig } from "../harness-config.js";
 import { withRetry } from "./retry.js";
 import type { Block, Message, Provider, Response, StopReason, ToolDef } from "./types.js";
 
@@ -37,19 +36,25 @@ export class OpenRouterProvider implements Provider {
   // Retrying (Phase 9) re-opens the stream from scratch - see the same
   // caveat noted in anthropic.ts about a dropped connection potentially
   // replaying already-emitted text through onTextDelta on retry.
-  async send(messages: Message[], tools: ToolDef[] = [], onTextDelta?: (chunk: string) => void): Promise<Response> {
-    return withRetry(() => this.streamOnce(messages, tools, onTextDelta));
+  async send(
+    messages: Message[],
+    systemPrompt: string,
+    tools: ToolDef[] = [],
+    onTextDelta?: (chunk: string) => void,
+  ): Promise<Response> {
+    return withRetry(() => this.streamOnce(messages, systemPrompt, tools, onTextDelta));
   }
 
   private async streamOnce(
     messages: Message[],
+    systemPrompt: string,
     tools: ToolDef[],
     onTextDelta?: (chunk: string) => void,
   ): Promise<Response> {
     const stream = await this.client.chat.completions.create({
       model: this.model,
       max_tokens: config.maxTokens,
-      messages: [{ role: "system", content: harnessConfig.systemPrompt }, ...toOpenAIMessages(messages)],
+      messages: [{ role: "system", content: systemPrompt }, ...toOpenAIMessages(messages)],
       tools: tools.length ? tools.map(toOpenAITool) : undefined,
       stream: true,
     });

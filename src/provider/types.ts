@@ -41,9 +41,19 @@ export interface Response {
 //   }
 export interface Provider {
   readonly model: string;
+  // systemPrompt (Phase 14): passed explicitly by the caller (Agent)
+  // instead of each provider reading a global config singleton, so a
+  // subagent's Agent instance can run with its own system prompt through
+  // the same Provider the root agent uses.
+  //
   // onTextDelta (Phase 12): fires with each text chunk as it streams in,
   // in addition to the full Response returned at the end - tool_use
   // content never streams incrementally, it always arrives as complete
   // JSON, so this only ever fires for text.
-  send(messages: Message[], tools?: ToolDef[], onTextDelta?: (chunk: string) => void): Promise<Response>;
+  send(
+    messages: Message[],
+    systemPrompt: string,
+    tools?: ToolDef[],
+    onTextDelta?: (chunk: string) => void,
+  ): Promise<Response>;
 }

@@ -20,18 +20,23 @@ export class MockProvider implements Provider {
   private callCount = 0;
 
   // Recorded for assertions - what the Agent actually sent on each call.
-  readonly calls: { messages: Message[]; tools: ToolDef[] }[] = [];
+  readonly calls: { messages: Message[]; systemPrompt: string; tools: ToolDef[] }[] = [];
 
   constructor(responses: MockResponse[]) {
     this.responses = responses;
   }
 
-  async send(messages: Message[], tools: ToolDef[] = [], onTextDelta?: (chunk: string) => void): Promise<Response> {
+  async send(
+    messages: Message[],
+    systemPrompt: string,
+    tools: ToolDef[] = [],
+    onTextDelta?: (chunk: string) => void,
+  ): Promise<Response> {
     // Snapshot the array: the Agent keeps mutating the same messages array
     // between turns, so recording the reference as-is would make every
     // past call's `messages` reflect the final state instead of what was
     // actually sent at the time.
-    this.calls.push({ messages: [...messages], tools });
+    this.calls.push({ messages: [...messages], systemPrompt, tools });
     const response = this.responses[this.callCount];
     if (!response) {
       throw new Error(`MockProvider: no scripted response for call #${this.callCount + 1}`);

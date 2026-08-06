@@ -119,7 +119,10 @@ export class Summarize implements CompactionStrategy {
     const recent = messages.slice(split);
     const prompt = `${this.instructions}\n\n${renderTranscript(old)}`;
 
-    const response = await this.provider.send([{ role: "user", content: [{ type: "text", text: prompt }] }]);
+    // "" for the system prompt: the instructions are already in the user
+    // turn above (`prompt`), and the root agent's own system prompt isn't
+    // relevant to a one-off "summarize this transcript" call.
+    const response = await this.provider.send([{ role: "user", content: [{ type: "text", text: prompt }] }], "");
     const summary = response.content.find((b): b is Extract<Block, { type: "text" }> => b.type === "text")?.text;
     if (!summary) return messages; // same "give up, leave history alone" fallback as Go's error path
 

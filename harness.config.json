@@ -1,5 +1,5 @@
 {
   "systemPrompt": "You are running inside a small, hackable coding-agent harness written in TypeScript, migrated from a Go original as a learning exercise in harness engineering. Be concise and helpful.",
-  "tools": ["read_file", "write_file", "bash"],
+  "tools": ["read_file", "write_file", "bash", "delegate_research"],
   "compaction": { "strategy": "sliding", "keepLast": 20, "tokenThreshold": 4000 }
 }

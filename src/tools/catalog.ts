@@ -4,27 +4,60 @@
 // list from config instead, so enabling/disabling a local tool for a given
 // deployment is a one-line change in harness.config.json, not a code edit
 // in three entry points.
+//
+// Phase 14: subagents (registerSubagents() below) need a Provider to
+// construct, unlike the static tools above — so STATIC_CATALOG stays a
+// plain map, and delegate_<name> tools are built on demand inside
+// registerCatalogTools() instead.
 
 import { ConfigError } from "../errors.js";
+import type { Provider } from "../provider/types.js";
+import { delegateTool } from "../subagent/delegate.js";
+import { ResearchSubagent } from "../subagent/research.js";
+import { SubagentRegistry } from "../subagent/registry.js";
 import { bashTool } from "./bash.js";
 import { readFileTool } from "./read_file.js";
 import type { ToolRegistry } from "./registry.js";
 import type { Tool } from "./types.js";
 import { writeFileTool } from "./write_file.js";
 
-export const TOOL_CATALOG: Record<string, Tool> = {
+const STATIC_CATALOG: Record<string, Tool> = {
   read_file: readFileTool,
   write_file: writeFileTool,
   bash: bashTool,
 };
 
-export function registerCatalogTools(registry: ToolRegistry, names: string[]): void {
+// Every subagent this boilerplate ships with. Keep in sync with
+// registerSubagents() below - kept as a separate plain list (rather than
+// constructing real Subagent instances) so catalogToolNames() can list
+// names for scaffold.ts's prompts without needing a Provider yet.
+const SUBAGENT_NAMES = ["research"];
+
+// Every subagent this boilerplate ships with, exposed as delegate_<name> in
+// the tool catalog below. Extend this one function (and SUBAGENT_NAMES
+// above) to add another one - analogous to registerSubagents() in Go's
+// main.go.
+function registerSubagents(registry: SubagentRegistry, provider: Provider): void {
+  registry.register(new ResearchSubagent(provider));
+}
+
+// Tool names harness.config.json's "tools" array can reference, without
+// needing a Provider - scaffold.ts uses this to prompt "enable tool X?"
+// before any provider/API key exists yet.
+export function catalogToolNames(): string[] {
+  return [...Object.keys(STATIC_CATALOG), ...SUBAGENT_NAMES.map((n) => `delegate_${n}`)];
+}
+
+export function registerCatalogTools(registry: ToolRegistry, names: string[], provider: Provider): void {
+  const subagents = new SubagentRegistry();
+  registerSubagents(subagents, provider);
+  const delegateTools = new Map<string, Tool>(subagents.all().map((s) => [`delegate_${s.name}`, delegateTool(s)]));
+
   for (const name of names) {
-    const tool = TOOL_CATALOG[name];
+    const tool = STATIC_CATALOG[name] ?? delegateTools.get(name);
     if (!tool) {
-      throw new ConfigError(
-        `Unknown tool "${name}" in harness.config.json (available: ${Object.keys(TOOL_CATALOG).join(", ")}).`,
-      );
+      const available = [...Object.keys(STATIC_CATALOG), ...delegateTools.keys()];
+      throw new ConfigError(`Unknown tool "${name}" in harness.config.json (available: ${available.join(", ")}).`);
     }
     registry.register(tool);
   }

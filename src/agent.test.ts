@@ -91,6 +91,24 @@ test("a denied confirmation short-circuits the tool call", async () => {
   ]);
 });
 
+test("passes the configured systemPrompt through to the provider on every call", async () => {
+  const provider = new MockProvider([{ content: [{ type: "text", text: "hi" }], stopReason: "end_turn" }]);
+  const agent = new Agent({ provider, tools: registryWith(), systemPrompt: "You are a pirate." });
+
+  await agent.send("hello");
+
+  assert.equal(provider.calls[0].systemPrompt, "You are a pirate.");
+});
+
+test("defaults to an empty systemPrompt when none is given", async () => {
+  const provider = new MockProvider([{ content: [{ type: "text", text: "hi" }], stopReason: "end_turn" }]);
+  const agent = new Agent({ provider, tools: registryWith() });
+
+  await agent.send("hello");
+
+  assert.equal(provider.calls[0].systemPrompt, "");
+});
+
 test("streams text via onTextDelta and still fires onAssistantText once with the full text at the end", async () => {
   const provider = new MockProvider([
     { content: [{ type: "text", text: "hello there" }], stopReason: "end_turn", textDeltas: ["hel", "lo ", "there"] },
