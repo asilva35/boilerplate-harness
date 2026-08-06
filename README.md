@@ -272,6 +272,15 @@ Try it: have a long-ish conversation that mentions something concrete early on (
 
 Try it: ask the root agent something that requires investigating the filesystem (e.g. "where is X handled, and what does that file look like?") and confirm in the log/UI that `delegate_research` fired as its own sub-conversation, returning only the final text to the main thread.
 
+## Phase 15: Subagent Delegation Heuristic
+
+**Key concept:** Phase 14 gave the *mechanism* to delegate (`delegate_research` wrapping a `Subagent`) but no guidance on *when* it's worth it. The rule of thumb: a small, local change is handled inline; something spanning several files or areas of the codebase is worth investigating with a subagent first; something ambiguous or architecturally risky needs a clarifying question instead of either.
+
+- `harness.config.json`'s `systemPrompt` documents this directly — no new mechanism needed, since the model already has `delegate_research` available from Phase 14. This is deliberately config content, not code: the guidance lives in the deployment's system prompt, the same place a forked harness would edit it for its own domain.
+- `src/tools/estimate_scope.ts` (optional per the migration guide, built anyway): a lightweight, deliberately non-LLM self-check — given a task description and a guessed list of files, it counts them (deduplicated) and returns a verdict (`local` / `consider delegate_research` / `delegate_research strongly recommended, clarify if still unclear`) as a plain heuristic, not another model call. The system prompt nudges the agent to call it when it isn't sure how broad a task is, and skip it when the answer is obvious either way.
+
+Try it: ask for a one-line fix and confirm the agent handles it directly, no `delegate_research` call. Then ask something that requires reading several unrelated files to answer, and confirm it calls `delegate_research` (optionally after `estimate_scope`) before answering, instead of reading them itself one by one.
+
 More phases land here as the project grows — see the commit history for the full progression.
 
 ## License

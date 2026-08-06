@@ -16,6 +16,7 @@ import { delegateTool } from "../subagent/delegate.js";
 import { ResearchSubagent } from "../subagent/research.js";
 import { SubagentRegistry } from "../subagent/registry.js";
 import { bashTool } from "./bash.js";
+import { estimateScopeTool } from "./estimate_scope.js";
 import { readFileTool } from "./read_file.js";
 import type { ToolRegistry } from "./registry.js";
 import type { Tool } from "./types.js";
@@ -25,6 +26,7 @@ const STATIC_CATALOG: Record<string, Tool> = {
   read_file: readFileTool,
   write_file: writeFileTool,
   bash: bashTool,
+  estimate_scope: estimateScopeTool,
 };
 
 // Every subagent this boilerplate ships with. Keep in sync with

@@ -8,7 +8,7 @@ import { ToolRegistry } from "./registry.js";
 test("catalogToolNames lists the static tools and every subagent's delegate_<name>, no provider needed", () => {
   const names = catalogToolNames();
 
-  assert.deepEqual(names.sort(), ["bash", "delegate_research", "read_file", "write_file"]);
+  assert.deepEqual(names.sort(), ["bash", "delegate_research", "estimate_scope", "read_file", "write_file"]);
 });
 
 test("registers delegate_research when named in harness.config.json's tools list", () => {
