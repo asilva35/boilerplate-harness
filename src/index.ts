@@ -48,7 +48,7 @@ async function main() {
   const agent = new Agent({
     provider,
     tools,
-    compactor: buildCompactor(harnessConfig.compaction),
+    compactor: buildCompactor(harnessConfig.compaction, provider),
     onToolCall: (name, rawInput) => console.log(`[tool] ${name} ${rawInput}`),
     // The text itself already reached stdout progressively via
     // onTextDelta below; onAssistantText firing (once, with the full
@@ -80,7 +80,7 @@ async function main() {
     }
     if (!input.trim()) continue;
 
-    if (runCommand(input, { agent, log: console.log })) {
+    if (await runCommand(input, { agent, log: console.log })) {
       console.log();
       continue;
     }

@@ -19,29 +19,29 @@ function loggingContext(agent: Agent) {
   };
 }
 
-test("a line without a leading slash is not a command", () => {
+test("a line without a leading slash is not a command", async () => {
   const agent = new Agent({ provider: new MockProvider([]), tools: new ToolRegistry() });
   const { ctx, logs } = loggingContext(agent);
 
-  assert.equal(runCommand("hello there", ctx), false);
+  assert.equal(await runCommand("hello there", ctx), false);
   assert.deepEqual(logs, []);
 });
 
-test("/help logs the command list through ctx.log, not console.log", () => {
+test("/help logs the command list through ctx.log, not console.log", async () => {
   const agent = new Agent({ provider: new MockProvider([]), tools: new ToolRegistry() });
   const { ctx, logs } = loggingContext(agent);
 
-  assert.equal(runCommand("/help", ctx), true);
+  assert.equal(await runCommand("/help", ctx), true);
   assert.equal(logs.length, 1);
   assert.match(logs[0], /available commands:/);
   assert.match(logs[0], /\/compact/);
 });
 
-test("an unknown command reports itself through ctx.log", () => {
+test("an unknown command reports itself through ctx.log", async () => {
   const agent = new Agent({ provider: new MockProvider([]), tools: new ToolRegistry() });
   const { ctx, logs } = loggingContext(agent);
 
-  assert.equal(runCommand("/bogus", ctx), true);
+  assert.equal(await runCommand("/bogus", ctx), true);
   assert.deepEqual(logs, ["unknown command: /bogus (try /help)"]);
 });
 
@@ -54,7 +54,7 @@ test("/clear empties the message history and refreshes before logging", async ()
   assert.ok(agent.getMessages().length > 0);
 
   const { ctx, logs, refreshCount } = loggingContext(agent);
-  runCommand("/clear", ctx);
+  await runCommand("/clear", ctx);
 
   assert.deepEqual(agent.getMessages(), []);
   assert.equal(refreshCount(), 1);
@@ -69,7 +69,7 @@ test("/history summarizes every message through a single ctx.log call", async ()
   await agent.send("hello");
 
   const { ctx, logs } = loggingContext(agent);
-  runCommand("/history", ctx);
+  await runCommand("/history", ctx);
 
   assert.equal(logs.length, 1);
   assert.match(logs[0], /2 messages in history:/);
@@ -86,7 +86,7 @@ test("/compact replaces the messages, refreshes before logging the new count", a
   const before = agent.getMessages().length;
 
   const { ctx, logs, refreshCount } = loggingContext(agent);
-  runCommand("/compact none", ctx);
+  await runCommand("/compact none", ctx);
 
   assert.equal(refreshCount(), 1);
   assert.deepEqual(logs, [`compacted: ${before} → ${before} messages`]);
@@ -101,9 +101,29 @@ test("/compact with an unknown strategy logs an error and never mutates or refre
   const before = agent.getMessages();
 
   const { ctx, logs, refreshCount } = loggingContext(agent);
-  runCommand("/compact bogus", ctx);
+  await runCommand("/compact bogus", ctx);
 
   assert.deepEqual(agent.getMessages(), before);
   assert.equal(refreshCount(), 0);
-  assert.deepEqual(logs, ["unknown strategy: bogus (try sliding or none)"]);
+  assert.deepEqual(logs, ["unknown strategy: bogus (try sliding, none, or summarize)"]);
+});
+
+test("/compact summarize asks the agent's own provider and replaces the whole history with a synthetic summary", async () => {
+  const agent = new Agent({
+    provider: new MockProvider([
+      { content: [{ type: "text", text: "hi" }], stopReason: "end_turn" },
+      { content: [{ type: "text", text: "earlier the user said hello" }], stopReason: "end_turn" },
+    ]),
+    tools: new ToolRegistry(),
+  });
+  await agent.send("hello");
+
+  const { ctx, logs, refreshCount } = loggingContext(agent);
+  await runCommand("/compact summarize", ctx);
+
+  const after = agent.getMessages();
+  assert.equal(after.length, 1);
+  assert.match((after[0].content[0] as { text: string }).text, /^\[earlier conversation summary\]/);
+  assert.equal(refreshCount(), 1);
+  assert.deepEqual(logs, ["compacted: 2 → 1 messages"]);
 });

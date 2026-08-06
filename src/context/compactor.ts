@@ -5,10 +5,14 @@
 // the array of user/assistant turns.
 
 import type { HarnessConfig } from "../harness-config.js";
-import type { Message } from "../provider/types.js";
+import type { Block, Message, Provider } from "../provider/types.js";
 
+// Promise<Message[]> (not just Message[]) because Summarize below needs to
+// call out to the provider - NoCompaction and SlidingWindow don't need to
+// await anything internally, but still declare `async compact()` to
+// satisfy the same interface every strategy is used through.
 export interface CompactionStrategy {
-  compact(messages: Message[]): Message[];
+  compact(messages: Message[]): Promise<Message[]>;
 }
 
 // A ~4-characters-per-token heuristic — the same starting point the Go
@@ -45,9 +49,25 @@ function hasToolResult(m: Message): boolean {
   return m.content.some((b) => b.type === "tool_result");
 }
 
+// Equivalent to api.RenderTranscript in internal/api/types.go: a plain-text
+// transcript fed into the summarization prompt below.
+export function renderTranscript(messages: Message[]): string {
+  let out = "";
+  for (const m of messages) {
+    out += `${m.role}: `;
+    for (const b of m.content) {
+      if (b.type === "text") out += b.text;
+      else if (b.type === "tool_use") out += `[called ${b.toolName} with ${b.toolInput}]`;
+      else out += `[tool result: ${b.toolResult}]`;
+      out += "\n";
+    }
+  }
+  return out;
+}
+
 // Default — never modifies the messages.
 export class NoCompaction implements CompactionStrategy {
-  compact(messages: Message[]): Message[] {
+  async compact(messages: Message[]): Promise<Message[]> {
     return messages;
   }
 }
@@ -63,7 +83,7 @@ export class SlidingWindow implements CompactionStrategy {
     private readonly tokenThreshold = 0,
   ) {}
 
-  compact(messages: Message[]): Message[] {
+  async compact(messages: Message[]): Promise<Message[]> {
     if (messages.length <= this.keepLast) return messages;
     if (this.tokenThreshold > 0 && estimateTokens(messages) < this.tokenThreshold) {
       return messages;
@@ -73,11 +93,49 @@ export class SlidingWindow implements CompactionStrategy {
   }
 }
 
+const DEFAULT_SUMMARIZE_INSTRUCTIONS =
+  "Summarize the following conversation concisely. Preserve facts, decisions, file paths, " +
+  "code identifiers, and anything else needed to continue the conversation. Output the " +
+  "summary directly with no preamble.";
+
+// Equivalent to internal/compact/summarize.go: instead of mechanically
+// trimming (SlidingWindow), asks the provider itself to summarize the
+// older turns once `threshold` is reached, replacing them with a single
+// synthetic message and leaving the most recent `keepRecent` untouched.
+export class Summarize implements CompactionStrategy {
+  constructor(
+    private readonly provider: Provider,
+    private readonly threshold: number,
+    private readonly keepRecent: number,
+    private readonly instructions = DEFAULT_SUMMARIZE_INSTRUCTIONS,
+  ) {}
+
+  async compact(messages: Message[]): Promise<Message[]> {
+    if (messages.length < this.threshold) return messages;
+    const split = safeSplitPoint(messages, messages.length - this.keepRecent);
+    if (split === 0) return messages;
+
+    const old = messages.slice(0, split);
+    const recent = messages.slice(split);
+    const prompt = `${this.instructions}\n\n${renderTranscript(old)}`;
+
+    const response = await this.provider.send([{ role: "user", content: [{ type: "text", text: prompt }] }]);
+    const summary = response.content.find((b): b is Extract<Block, { type: "text" }> => b.type === "text")?.text;
+    if (!summary) return messages; // same "give up, leave history alone" fallback as Go's error path
+
+    return [
+      { role: "user", content: [{ type: "text", text: `[earlier conversation summary]\n${summary}` }] },
+      ...recent,
+    ];
+  }
+}
+
 // Phase 8: builds the compactor an entry point should use from
 // harness.config.json's "compaction" field, replacing what used to be a
 // `new SlidingWindow(20, 4000)` hardcoded identically in all three entry
-// points.
-export function buildCompactor(cfg: HarnessConfig["compaction"]): CompactionStrategy {
+// points. Phase 13: takes the provider too, only used by "summarize".
+export function buildCompactor(cfg: HarnessConfig["compaction"], provider: Provider): CompactionStrategy {
   if (cfg.strategy === "none") return new NoCompaction();
+  if (cfg.strategy === "summarize") return new Summarize(provider, cfg.summarizeThreshold, cfg.keepLast);
   return new SlidingWindow(cfg.keepLast, cfg.tokenThreshold);
 }

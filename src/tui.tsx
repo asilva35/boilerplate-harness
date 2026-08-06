@@ -39,7 +39,7 @@ async function main() {
   const agent = new Agent({
     provider,
     tools,
-    compactor: buildCompactor(harnessConfig.compaction),
+    compactor: buildCompactor(harnessConfig.compaction, provider),
     onToolCall: (name, rawInput) => console.log(`[tool] ${name} ${rawInput}`),
     onAssistantText: (text) => {
       console.log(text);

@@ -30,7 +30,10 @@ export interface AgentOptions {
 }
 
 export class Agent {
-  private readonly provider: Provider;
+  // Public (Phase 13): commands.ts needs a Provider to build a Summarize
+  // strategy on demand for "/compact summarize" - same reasoning `compactor`
+  // below is already public for "/compact <strategy>" to read/replace it.
+  readonly provider: Provider;
   private readonly tools: ToolRegistry;
   private readonly maxTurns: number;
   private readonly onToolCall?: (name: string, rawInput: string) => void;
@@ -73,7 +76,7 @@ export class Agent {
 
     for (let turn = 0; turn < this.maxTurns; turn++) {
       const before = this.messages;
-      const compacted = this.compactor.compact(before);
+      const compacted = await this.compactor.compact(before);
       if (compacted.length !== before.length) {
         console.log(`[compact] ${before.length} → ${compacted.length} messages`);
       }

@@ -109,7 +109,7 @@ export function App({ agent, registerConfirm, registerTextDelta, registerStreamR
       setHistory((h) => [...h, line]);
       console.log(`> ${line}`);
 
-      if (runCommand(line, { agent, log: console.log })) {
+      if (await runCommand(line, { agent, log: console.log })) {
         console.log();
         return;
       }

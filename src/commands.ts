@@ -3,7 +3,7 @@
 // (handled or unrecognized) and false if it should pass through to the
 // model as a normal message — same contract as Go's runCommand().
 
-import { NoCompaction, SlidingWindow } from "./context/compactor.js";
+import { NoCompaction, SlidingWindow, Summarize } from "./context/compactor.js";
 import type { Agent } from "./agent.js";
 import type { Block } from "./provider/types.js";
 
@@ -25,7 +25,7 @@ export interface CommandContext {
   refreshHistory?: () => void;
 }
 
-type CommandHandler = (args: string, ctx: CommandContext) => void;
+type CommandHandler = (args: string, ctx: CommandContext) => void | Promise<void>;
 
 interface Command {
   description: string;
@@ -39,13 +39,13 @@ const commands: Record<string, Command> = {
   history: { description: "show the message history", run: cmdHistory },
   compact: {
     description: "run compaction now (optionally with a strategy)",
-    usage: "/compact [sliding|none]",
+    usage: "/compact [sliding|none|summarize]",
     run: cmdCompact,
   },
   exit: { description: "exit the harness", run: cmdExit },
 };
 
-export function runCommand(line: string, ctx: CommandContext): boolean {
+export async function runCommand(line: string, ctx: CommandContext): Promise<boolean> {
   if (!line.startsWith("/")) return false;
 
   const [name, ...rest] = line.slice(1).trim().split(/\s+/);
@@ -56,7 +56,7 @@ export function runCommand(line: string, ctx: CommandContext): boolean {
     ctx.log(`unknown command: /${name} (try /help)`);
     return true;
   }
-  cmd.run(args, ctx);
+  await cmd.run(args, ctx);
   return true;
 }
 
@@ -100,7 +100,7 @@ function truncate(s: string, n: number): string {
   return s.length <= n ? s : s.slice(0, n) + "…";
 }
 
-function cmdCompact(args: string, ctx: CommandContext): void {
+async function cmdCompact(args: string, ctx: CommandContext): Promise<void> {
   let strategy = ctx.agent.compactor;
   switch (args.toLowerCase()) {
     case "":
@@ -111,13 +111,20 @@ function cmdCompact(args: string, ctx: CommandContext): void {
     case "none":
       strategy = new NoCompaction();
       break;
+    case "summarize":
+      // threshold=1, keepRecent=0: an explicit "/compact summarize" means
+      // do it now, on the whole conversation - unlike the config-driven
+      // strategy (Phase 8's buildCompactor), which only fires once
+      // summarizeThreshold is reached and always leaves keepLast intact.
+      strategy = new Summarize(ctx.agent.provider, 1, 0);
+      break;
     default:
-      ctx.log(`unknown strategy: ${args} (try sliding or none)`);
+      ctx.log(`unknown strategy: ${args} (try sliding, none, or summarize)`);
       return;
   }
 
   const before = ctx.agent.getMessages();
-  const compacted = strategy.compact(before);
+  const compacted = await strategy.compact(before);
   ctx.agent.setMessages(compacted);
   ctx.refreshHistory?.();
   ctx.log(`compacted: ${before.length} → ${compacted.length} messages`);

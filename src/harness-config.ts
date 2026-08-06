@@ -16,11 +16,15 @@ import { ConfigError } from "./errors.js";
 
 const compactionSchema = z
   .object({
-    strategy: z.enum(["sliding", "none"]).default("sliding"),
+    strategy: z.enum(["sliding", "none", "summarize"]).default("sliding"),
     keepLast: z.number().int().positive().default(20),
     tokenThreshold: z.number().int().nonnegative().default(4000),
+    // Only used by "summarize" (Phase 13): a message-count trigger, unlike
+    // tokenThreshold above - matching Go's Summarize.Threshold, which the
+    // migration guide's entregable also states in message-count terms.
+    summarizeThreshold: z.number().int().positive().default(40),
   })
-  .default({ strategy: "sliding", keepLast: 20, tokenThreshold: 4000 });
+  .default({ strategy: "sliding", keepLast: 20, tokenThreshold: 4000, summarizeThreshold: 40 });
 
 const harnessConfigSchema = z.object({
   systemPrompt: z.string().min(1),

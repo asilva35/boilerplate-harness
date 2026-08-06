@@ -132,7 +132,7 @@ async function main() {
   const agent = new Agent({
     provider,
     tools,
-    compactor: buildCompactor(harnessConfig.compaction),
+    compactor: buildCompactor(harnessConfig.compaction, provider),
     onToolCall: (name, rawInput) => broadcast({ type: "tool_call", name, input: rawInput }),
     onAssistantText: (text) => broadcast({ type: "assistant_text", text }),
     onTextDelta: (chunk) => broadcast({ type: "text_delta", text: chunk }),
@@ -189,16 +189,16 @@ async function main() {
         // answered, whether it's a "/" command or not.
         broadcast({ type: "user_text", text: line });
 
-        if (
-          runCommand(line, {
-            agent,
-            log: (text) => broadcast({ type: "command_output", text }),
-            refreshHistory: () => broadcast({ type: "history", messages: agent.getMessages() }),
-          })
-        )
-          return;
-
         void (async () => {
+          if (
+            await runCommand(line, {
+              agent,
+              log: (text) => broadcast({ type: "command_output", text }),
+              refreshHistory: () => broadcast({ type: "history", messages: agent.getMessages() }),
+            })
+          )
+            return;
+
           broadcast({ type: "mode", mode: "thinking" });
           try {
             await agent.send(line);

@@ -248,6 +248,16 @@ Try it: ask the agent to overwrite a file that already exists, and confirm the `
 
 Try it: ask for a long answer from the browser and watch the text grow inside the bubble progressively, instead of appearing all at once at the end.
 
+## Phase 13: Summary Compaction (`Summarize`)
+
+**Key concept:** `SlidingWindow` trims mechanically, discarding whatever falls outside the window. `Summarize` asks the provider itself to summarize the older turns before dropping them — controlled, readable loss of detail instead of just losing context outright.
+
+- `src/context/compactor.ts`: `Summarize implements CompactionStrategy` (`compact` is now `async` on every strategy, `NoCompaction` and `SlidingWindow` included — the interface has to accommodate the one strategy that genuinely needs to await a network call). Once `messages.length >= threshold`, it splits at the nearest safe boundary (`safeSplitPoint`, unchanged from Phase 4), asks the provider to summarize everything before that split (`renderTranscript`, a plain-text rendering of the old messages — equivalent to Go's `api.RenderTranscript`), and replaces that whole chunk with one synthetic `"[earlier conversation summary]\n..."` message, leaving the most recent `keepRecent` messages untouched. If the provider's response has no text for some reason, it gives up and returns the history unchanged rather than losing it.
+- `harness.config.json`'s `compaction.strategy` accepts `"summarize"` now, alongside `"sliding"` and `"none"`; a new `summarizeThreshold` field (message count, unlike `tokenThreshold` which is token-based and only used by `sliding`) controls when it fires. `buildCompactor()` (Phase 8) needs the provider now, since `Summarize` is the one strategy that calls out to it.
+- `/compact summarize` in `commands.ts` builds a `Summarize` on the spot from the agent's own provider (`Agent.provider` is public for exactly this, same reasoning `Agent.compactor` already was) with `threshold=1, keepRecent=0` — an explicit invocation means "summarize the whole conversation now," not "wait for the configured threshold." Since this needs to `await` the provider call, `runCommand()` and every `CommandHandler` are `async` now — a change that ripples out to all three entry points, which already `await` other async work at their call sites.
+
+Try it: have a long-ish conversation that mentions something concrete early on (a file path, a decision), run `/compact summarize`, and check `/history` — the synthetic summary message should still mention that detail even though the original message is gone.
+
 More phases land here as the project grows — see the commit history for the full progression.
 
 ## License
