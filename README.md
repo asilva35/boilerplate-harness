@@ -108,6 +108,7 @@ src/
 │   └── index.html            Static chat frontend (HTML/CSS/JS, no build)
 ├── agent.ts               Agent Loop: tool-use, permissions, compaction
 ├── commands.ts             "/" command registry
+├── debug.ts                Ring-buffer debug log (record/recordCorrelated/pair/snapshot)
 ├── config.ts               Environment variables (secrets, provider/model selection)
 ├── harness-config.ts        Loads and validates harness.config.json
 ├── provider/                LLM abstraction layer
@@ -222,7 +223,7 @@ Try it: run `npm test` (all green, including the new retry tests); the practical
 
 ## Phase 10: Web UI with React + Vite + shadcn/ui
 
-**Key concept:** Phase 6 deliberately gave the browser client no build step — the "no magic" version to read first, same reasoning that kept `index.ts` untouched when `tui.tsx` (Ink) showed up in Phase 5. This phase adds a polished client on top **without touching the backend at all**: same WebSocket protocol (`history`, `user_text`, `assistant_text`, `text_delta`, `tool_call`, `risk_flag`, `confirm_request`, `mode`, `error`, `command_output`), a new client speaking it. It lands early on purpose — every web phase after this (multi-session, dashboard, chat history, attachments) is much easier to build on components than by hand-rolling DOM again each time.
+**Key concept:** Phase 6 deliberately gave the browser client no build step — the "no magic" version to read first, same reasoning that kept `index.ts` untouched when `tui.tsx` (Ink) showed up in Phase 5. This phase adds a polished client on top **without touching the backend at all**: same WebSocket protocol (`history`, `user_text`, `assistant_text`, `text_delta`, `tool_call`, `risk_flag`, `debug_event`, `confirm_request`, `mode`, `error`, `command_output`), a new client speaking it. It lands early on purpose — every web phase after this (multi-session, dashboard, chat history, attachments) is much easier to build on components than by hand-rolling DOM again each time.
 
 - `web-app/`: its own Vite + React + TypeScript subproject (own `package.json`, own `node_modules`), scaffolded with `npm create vite@latest` and then `npx shadcn@latest init`. It has zero build-time dependency on the backend — `src/lib/protocol.ts` is a local copy of the wire types, not an import across the process boundary.
 - `src/hooks/useHarnessSocket.ts`: one hook holding the entire client-side protocol logic — connect, rebuild the feed from `history` on (re)connect, append one item per live event, and reconnect with the same doubling backoff (capped at 10s) the Phase 6 vanilla client used.
@@ -322,6 +323,17 @@ Try it: ask the root agent to delegate a TypeScript-related task to `delegate_re
 - Visibility per entry point: `index.ts`/`tui.tsx` print a `⚠ [name] risk: ...` line; `server.ts` broadcasts a new `risk_flag` protocol message; the React UI and the `/legacy` vanilla client both render it as a full-width banner (amber for `low`, destructive-red for `high`) instead of the small chip a routine tool call gets - the whole point is that it must not read as just another line to skim past.
 
 Try it: ask the root agent to have `delegate_research` investigate a file with something an actual reviewer would flag - a hardcoded credential works well - and confirm the risk shows up as its own distinct banner/line in whichever UI you're using, not just somewhere inside the assistant's prose.
+
+## Phase 19: Ring-Buffer Debug Log (`/debug`)
+
+**Key concept:** internal observability - a correlated (request↔response) ring buffer of events, so you can inspect exactly what went to the provider or what a tool returned, without cluttering the actual conversation with the model.
+
+- `src/debug.ts`: a 500-event ring buffer (`record`/`recordCorrelated`, `pair`, `snapshot`, `clear`, `findById`, `latest`). A module-level singleton, deliberately - the same call Go's `internal/debug/debug.go` makes and for the same reason: this is read from deep inside `agent.ts` and both providers, several layers away from where entry points wire up explicit dependencies like `Provider`/`MemoryStore`/`SkillRegistry`. When disabled (the default), `record()` short-circuits to one boolean check - no allocation, no cost. Simplification vs Go: no `Recordf`/`Recordfc` printf variants - JS already has template literals, so callers interpolate inline instead of a separate printf-style helper.
+- Call sites: `provider/anthropic.ts` and `provider/openrouter.ts` record one request/response pair per `send()` call (not per internal retry attempt - a flaky connection that retries twice doesn't spam the ring with near-identical entries), with the full request/response JSON as the payload. `agent.ts` records a request/response pair per tool call (a denial becomes a `warn` event instead), and a `compact` event whenever compaction actually changes the message count, with the before/after transcript as payload.
+- `/debug [on|off|clear|ls|show [id]]` in `commands.ts` - same verbs as Go's `cmdDebug`. Being a regular slash command, it already works in all three entry points for free through the existing `command_output` plumbing (Phase 6/10), no extra wiring needed for the core practical test.
+- `server.ts` also broadcasts a `debug_event` message (via `debug.ts`'s `setSink`) for every event recorded while enabled, and the React UI has a full debug panel (`DebugPanel.tsx`, toggled from the header) that lists them live and expands to show the payload - a slide-over, not a modal, so you can keep triggering tool calls while watching it.
+
+Try it: `/debug on`, trigger a tool call, then `/debug show` (defaults to the latest event with a payload) to see the raw JSON that went to the provider - in the browser, open the Debug panel first and watch the same events arrive live.
 
 More phases land here as the project grows — see the commit history for the full progression.
 

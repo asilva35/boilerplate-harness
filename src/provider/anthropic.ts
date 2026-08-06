@@ -5,6 +5,7 @@
 
 import Anthropic from "@anthropic-ai/sdk";
 import { config } from "../config.js";
+import { record, recordCorrelated } from "../debug.js";
 import { withRetry } from "./retry.js";
 import type { Block, Message, Provider, Response, StopReason, ToolDef } from "./types.js";
 
@@ -30,22 +31,56 @@ export class AnthropicProvider implements Provider {
     // (inputJson events) that isn't valid to parse until complete, so
     // finalMessage() is still what we build tool_use blocks from below.
     //
+    // Phase 19: one debug event pair per send() call, not per internal
+    // retry attempt - keeps the ring readable (a flaky connection that
+    // retries twice doesn't spam three near-identical request events).
+    const reqId = record(
+      "provider",
+      "info",
+      `→ anthropic.send model=${this.model} msgs=${messages.length} tools=${tools.length}`,
+      JSON.stringify(
+        {
+          model: this.model,
+          max_tokens: config.maxTokens,
+          system: systemPrompt,
+          tools: tools.map((t) => ({ name: t.name, description: t.description })),
+          messages,
+        },
+        null,
+        2,
+      ),
+    );
+    const start = Date.now();
+
     // Retrying (Phase 9) re-runs this whole function, including opening a
     // brand new stream - if a connection drops mid-stream after some text
     // already reached onTextDelta, a retry can replay part of that text a
     // second time. Rare in practice (retries only trigger on 429/5xx/
     // connection errors), and simpler than reconciling partial streams.
-    const response = await withRetry(() => {
-      const stream = this.client.messages.stream({
-        model: this.model,
-        max_tokens: config.maxTokens,
-        system: systemPrompt,
-        messages: messages.map(toAnthropicMessage),
-        tools: tools.length ? tools.map(toAnthropicTool) : undefined,
+    let response: Anthropic.Message;
+    try {
+      response = await withRetry(() => {
+        const stream = this.client.messages.stream({
+          model: this.model,
+          max_tokens: config.maxTokens,
+          system: systemPrompt,
+          messages: messages.map(toAnthropicMessage),
+          tools: tools.length ? tools.map(toAnthropicTool) : undefined,
+        });
+        if (onTextDelta) stream.on("text", onTextDelta);
+        return stream.finalMessage();
       });
-      if (onTextDelta) stream.on("text", onTextDelta);
-      return stream.finalMessage();
-    });
+    } catch (err) {
+      const elapsed = Date.now() - start;
+      recordCorrelated(
+        reqId,
+        "provider",
+        "error",
+        `← anthropic.send error (${elapsed}ms): ${(err as Error).message}`,
+      );
+      throw err;
+    }
+    const elapsed = Date.now() - start;
 
     const content: Block[] = [];
     for (const block of response.content) {
@@ -60,6 +95,14 @@ export class AnthropicProvider implements Provider {
         });
       }
     }
+
+    recordCorrelated(
+      reqId,
+      "provider",
+      "info",
+      `← anthropic.send (${elapsed}ms stop=${response.stop_reason})`,
+      JSON.stringify({ elapsed: `${elapsed}ms`, stop_reason: response.stop_reason, content: response.content }, null, 2),
+    );
 
     return { content, stopReason: fromStopReason(response.stop_reason) };
   }

@@ -4,6 +4,8 @@
 // model as a normal message — same contract as Go's runCommand().
 
 import { NoCompaction, SlidingWindow, Summarize } from "./context/compactor.js";
+import { clear as clearDebugLog, findById, isEnabled, latest, setEnabled, snapshot } from "./debug.js";
+import type { DebugEvent } from "./debug.js";
 import type { Agent } from "./agent.js";
 import type { Block } from "./provider/types.js";
 
@@ -41,6 +43,11 @@ const commands: Record<string, Command> = {
     description: "run compaction now (optionally with a strategy)",
     usage: "/compact [sliding|none|summarize]",
     run: cmdCompact,
+  },
+  debug: {
+    description: "control the debug event log (toggle / inspect entries)",
+    usage: "/debug [on|off|clear|ls|show [id]]",
+    run: cmdDebug,
   },
   exit: { description: "exit the harness", run: cmdExit },
 };
@@ -128,6 +135,88 @@ async function cmdCompact(args: string, ctx: CommandContext): Promise<void> {
   ctx.agent.setMessages(compacted);
   ctx.refreshHistory?.();
   ctx.log(`compacted: ${before.length} → ${compacted.length} messages`);
+}
+
+function cmdDebug(args: string, ctx: CommandContext): void {
+  const trimmed = args.trim();
+  const spaceIdx = trimmed.indexOf(" ");
+  const verb = (spaceIdx === -1 ? trimmed : trimmed.slice(0, spaceIdx)).toLowerCase();
+  const rest = spaceIdx === -1 ? "" : trimmed.slice(spaceIdx + 1).trim();
+
+  switch (verb) {
+    case "":
+      setEnabled(!isEnabled());
+      break;
+    case "on":
+    case "true":
+    case "yes":
+      setEnabled(true);
+      break;
+    case "off":
+    case "false":
+    case "no":
+      setEnabled(false);
+      break;
+    case "clear":
+      clearDebugLog();
+      ctx.log("debug log cleared");
+      return;
+    case "ls":
+    case "list":
+      cmdDebugList(ctx);
+      return;
+    case "show":
+    case "dump":
+      cmdDebugShow(rest, ctx);
+      return;
+    default:
+      ctx.log(`unknown value: ${verb} (try on/off/clear/ls/show)`);
+      return;
+  }
+  ctx.log(`debug: ${isEnabled() ? "on" : "off"}`);
+}
+
+function cmdDebugList(ctx: CommandContext): void {
+  const events = snapshot();
+  if (events.length === 0) {
+    ctx.log("debug log is empty");
+    return;
+  }
+  const lines = events.map((e) => {
+    const marker = e.payload ? "•" : " ";
+    return `  ${marker} #${e.id} ${formatEventTime(e.time)} ${e.source.padEnd(10)} ${e.message}`;
+  });
+  lines.push(`${events.length} events (• = has payload). use /debug show <id> for full content.`);
+  ctx.log(lines.join("\n"));
+}
+
+function cmdDebugShow(idStr: string, ctx: CommandContext): void {
+  let event: DebugEvent | undefined;
+  if (!idStr) {
+    event = latest();
+    if (!event) {
+      ctx.log("debug log is empty");
+      return;
+    }
+  } else {
+    const id = Number(idStr);
+    if (!Number.isInteger(id)) {
+      ctx.log(`not a valid id: ${idStr}`);
+      return;
+    }
+    event = findById(id);
+    if (!event) {
+      ctx.log(`no event with id #${id} (it may have aged out of the ring)`);
+      return;
+    }
+  }
+  const header = `#${event.id}  ${formatEventTime(event.time)}  ${event.source}  ${event.message}`;
+  ctx.log(`${header}\n${event.payload || "(no payload)"}`);
+}
+
+function formatEventTime(d: Date): string {
+  const pad = (n: number, len = 2) => String(n).padStart(len, "0");
+  return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}.${pad(d.getMilliseconds(), 3)}`;
 }
 
 // Same as cmdExit in Go (direct os.Exit(0), without propagating the signal

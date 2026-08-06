@@ -4,7 +4,11 @@
 // same doubling backoff (capped at 10s) on close.
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { truncate, type ClientMessage, type Message, type ServerMessage } from "@/lib/protocol";
+import { truncate, type ClientMessage, type DebugEvent, type Message, type ServerMessage } from "@/lib/protocol";
+
+// Mirrors src/debug.ts's own RING_CAPACITY - no point keeping more client-
+// side than the server itself would ever have live at once.
+const MAX_DEBUG_EVENTS = 500;
 
 export type ConnectionStatus = "connecting" | "connected" | "disconnected";
 export type Mode = "idle" | "thinking" | "approval";
@@ -32,6 +36,7 @@ export function useHarnessSocket() {
   const [mode, setMode] = useState<Mode>("idle");
   const [feed, setFeed] = useState<FeedItem[]>([]);
   const [pendingApproval, setPendingApproval] = useState<PendingApproval | null>(null);
+  const [debugEvents, setDebugEvents] = useState<DebugEvent[]>([]);
 
   const socketRef = useRef<WebSocket | null>(null);
   const reconnectDelayRef = useRef(1000);
@@ -148,6 +153,12 @@ export function useHarnessSocket() {
             ]);
             break;
           }
+          case "debug_event":
+            setDebugEvents((prev) => {
+              const next = [...prev, msg.event];
+              return next.length > MAX_DEBUG_EVENTS ? next.slice(next.length - MAX_DEBUG_EVENTS) : next;
+            });
+            break;
           case "confirm_request":
             setPendingApproval({ name: msg.name, input: msg.input, diff: msg.diff });
             setMode("approval");
@@ -191,5 +202,5 @@ export function useHarnessSocket() {
     setMode("idle");
   }, []);
 
-  return { status, mode, feed, pendingApproval, send, respondApproval };
+  return { status, mode, feed, pendingApproval, debugEvents, send, respondApproval };
 }

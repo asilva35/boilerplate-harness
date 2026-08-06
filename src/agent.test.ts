@@ -1,10 +1,18 @@
-import { test } from "node:test";
+import { test, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import { z } from "zod";
 import { Agent } from "./agent.js";
+import { clear as clearDebugLog, setEnabled as setDebugEnabled, snapshot as debugSnapshot } from "./debug.js";
 import { MockProvider } from "./provider/mock.js";
 import { ToolRegistry } from "./tools/registry.js";
 import type { Tool, ToolResult } from "./tools/types.js";
+
+// debug.ts is a module-level singleton - reset it before every test so
+// the debug-log tests below (and the ones above them) don't leak state.
+beforeEach(() => {
+  setDebugEnabled(false);
+  clearDebugLog();
+});
 
 const echoTool: Tool<{ text: string }> = {
   name: "echo",
@@ -191,6 +199,73 @@ test("onRiskFlag never fires for risk 'none' or an unset risk, and the text is p
   assert.deepEqual(lastMessage.content, [
     { type: "tool_result", toolUseId: "1", toolResult: "all clear", isError: false },
   ]);
+});
+
+test("records a correlated tool request/response pair when debug logging is enabled", async () => {
+  setDebugEnabled(true);
+  const provider = new MockProvider([
+    { content: [{ type: "tool_use", toolUseId: "1", toolName: "echo", toolInput: JSON.stringify({ text: "ping" }) }], stopReason: "tool_use" },
+    { content: [{ type: "text", text: "done" }], stopReason: "end_turn" },
+  ]);
+  const agent = new Agent({ provider, tools: registryWith(echoTool) });
+
+  await agent.send("echo ping");
+
+  const events = debugSnapshot().filter((e) => e.source === "tool");
+  assert.equal(events.length, 2);
+  const [req, resp] = events;
+  assert.equal(req.level, "info");
+  assert.match(req.message, /→ echo/);
+  assert.equal(req.payload, JSON.stringify({ text: "ping" }));
+  assert.equal(resp.correlatedId, req.id);
+  assert.equal(resp.level, "info");
+  assert.equal(resp.payload, "ping");
+});
+
+test("records nothing when debug logging is off (the default)", async () => {
+  const provider = new MockProvider([
+    { content: [{ type: "tool_use", toolUseId: "1", toolName: "echo", toolInput: JSON.stringify({ text: "ping" }) }], stopReason: "tool_use" },
+    { content: [{ type: "text", text: "done" }], stopReason: "end_turn" },
+  ]);
+  const agent = new Agent({ provider, tools: registryWith(echoTool) });
+
+  await agent.send("echo ping");
+
+  assert.deepEqual(debugSnapshot(), []);
+});
+
+test("records a denial as a warn event correlated back to the request", async () => {
+  setDebugEnabled(true);
+  const provider = new MockProvider([
+    { content: [{ type: "tool_use", toolUseId: "1", toolName: "risky", toolInput: JSON.stringify({ text: "boom" }) }], stopReason: "tool_use" },
+    { content: [{ type: "text", text: "ok, skipped it" }], stopReason: "end_turn" },
+  ]);
+  const agent = new Agent({ provider, tools: registryWith(riskyTool), confirm: async () => false });
+
+  await agent.send("do the risky thing");
+
+  const events = debugSnapshot().filter((e) => e.source === "tool");
+  assert.equal(events.length, 2);
+  const [req, denial] = events;
+  assert.equal(denial.level, "warn");
+  assert.match(denial.message, /denied: risky/);
+  assert.equal(denial.correlatedId, req.id);
+});
+
+test("records a compaction event only when compaction actually changes the message count", async () => {
+  setDebugEnabled(true);
+  const provider = new MockProvider([{ content: [{ type: "text", text: "hi" }], stopReason: "end_turn" }]);
+  const agent = new Agent({
+    provider,
+    tools: registryWith(),
+    compactor: { compact: async () => [] }, // drops everything, always "changes"
+  });
+
+  await agent.send("hello");
+
+  const compactEvents = debugSnapshot().filter((e) => e.source === "compact");
+  assert.equal(compactEvents.length, 1);
+  assert.match(compactEvents[0].message, /1 → 0 msgs/);
 });
 
 test("throws once maxTurns is exceeded without ever contacting a real provider", async () => {

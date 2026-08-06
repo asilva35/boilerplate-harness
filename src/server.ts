@@ -26,6 +26,8 @@ import { WebSocketServer, type WebSocket } from "ws";
 import { Agent } from "./agent.js";
 import { runCommand } from "./commands.js";
 import { buildCompactor } from "./context/compactor.js";
+import { setSink } from "./debug.js";
+import type { DebugEvent } from "./debug.js";
 import { buildWriteDiff } from "./tools/diff.js";
 import { reportFatal } from "./errors.js";
 import { harnessConfig } from "./harness-config.js";
@@ -64,6 +66,7 @@ type ServerMessage =
   | { type: "text_delta"; text: string }
   | { type: "tool_call"; name: string; input: string }
   | { type: "risk_flag"; name: string; risk: Risk; nextRecommended?: string }
+  | { type: "debug_event"; event: DebugEvent }
   | { type: "confirm_request"; name: string; input: string; diff?: string }
   | { type: "mode"; mode: "thinking" | "idle" }
   | { type: "error"; message: string }
@@ -131,6 +134,12 @@ async function main() {
       if (socket.readyState === socket.OPEN) socket.send(payload);
     }
   }
+
+  // Phase 19: live-streams every recorded event to connected tabs. record()/
+  // recordCorrelated() already short-circuit when debug logging is off, so
+  // this sink simply never fires until "/debug on" - no separate gating
+  // needed here.
+  setSink((event) => broadcast({ type: "debug_event", event }));
 
   // Same as pendingApproval in App.tsx: since the agent loop waits for the
   // confirmation before continuing, there's never more than one pending at

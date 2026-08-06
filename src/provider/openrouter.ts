@@ -15,6 +15,7 @@
 
 import OpenAI from "openai";
 import { config } from "../config.js";
+import { record, recordCorrelated } from "../debug.js";
 import { withRetry } from "./retry.js";
 import type { Block, Message, Provider, Response, StopReason, ToolDef } from "./types.js";
 
@@ -42,7 +43,51 @@ export class OpenRouterProvider implements Provider {
     tools: ToolDef[] = [],
     onTextDelta?: (chunk: string) => void,
   ): Promise<Response> {
-    return withRetry(() => this.streamOnce(messages, systemPrompt, tools, onTextDelta));
+    // Phase 19: one debug event pair per send() call, not per internal
+    // retry attempt inside withRetry() - keeps the ring readable.
+    const reqId = record(
+      "provider",
+      "info",
+      `→ openrouter.send model=${this.model} msgs=${messages.length} tools=${tools.length}`,
+      JSON.stringify(
+        {
+          model: this.model,
+          max_tokens: config.maxTokens,
+          system: systemPrompt,
+          tools: tools.map((t) => ({ name: t.name, description: t.description })),
+          messages,
+        },
+        null,
+        2,
+      ),
+    );
+    const start = Date.now();
+
+    try {
+      const response = await withRetry(() => this.streamOnce(messages, systemPrompt, tools, onTextDelta));
+      const elapsed = Date.now() - start;
+      recordCorrelated(
+        reqId,
+        "provider",
+        "info",
+        `← openrouter.send (${elapsed}ms stop=${response.stopReason})`,
+        JSON.stringify(
+          { elapsed: `${elapsed}ms`, stop_reason: response.stopReason, content: response.content },
+          null,
+          2,
+        ),
+      );
+      return response;
+    } catch (err) {
+      const elapsed = Date.now() - start;
+      recordCorrelated(
+        reqId,
+        "provider",
+        "error",
+        `← openrouter.send error (${elapsed}ms): ${(err as Error).message}`,
+      );
+      throw err;
+    }
   }
 
   private async streamOnce(

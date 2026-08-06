@@ -16,6 +16,18 @@ export interface Message {
   content: Block[];
 }
 
+// Mirrors src/debug.ts's DebugEvent, except `time` arrives as an ISO
+// string over the wire (JSON has no Date type) instead of a Date.
+export interface DebugEvent {
+  id: number;
+  correlatedId: number;
+  time: string;
+  source: string;
+  level: "info" | "warn" | "error";
+  message: string;
+  payload: string;
+}
+
 export type ServerMessage =
   | { type: "history"; messages: Message[] }
   | { type: "user_text"; text: string }
@@ -23,6 +35,7 @@ export type ServerMessage =
   | { type: "text_delta"; text: string }
   | { type: "tool_call"; name: string; input: string }
   | { type: "risk_flag"; name: string; risk: "none" | "low" | "high"; nextRecommended?: string }
+  | { type: "debug_event"; event: DebugEvent }
   | { type: "confirm_request"; name: string; input: string; diff?: string }
   | { type: "mode"; mode: "thinking" | "idle" }
   | { type: "error"; message: string }

@@ -14,7 +14,8 @@
 // clearMessages expose the history so slash commands (/compact, /clear,
 // /history) can read and mutate it from outside the loop.
 
-import { NoCompaction, type CompactionStrategy } from "./context/compactor.js";
+import { NoCompaction, renderTranscript, type CompactionStrategy } from "./context/compactor.js";
+import { record, recordCorrelated } from "./debug.js";
 import type { Block, Message, Provider } from "./provider/types.js";
 import type { Risk } from "./tools/types.js";
 import type { ToolRegistry } from "./tools/registry.js";
@@ -95,6 +96,13 @@ export class Agent {
       const compacted = await this.compactor.compact(before);
       if (compacted.length !== before.length) {
         console.log(`[compact] ${before.length} → ${compacted.length} messages`);
+        record(
+          "compact",
+          "info",
+          `${before.length} → ${compacted.length} msgs`,
+          `--- before (${before.length} msgs) ---\n${renderTranscript(before)}\n` +
+            `--- after (${compacted.length} msgs) ---\n${renderTranscript(compacted)}`,
+        );
       }
       this.messages = compacted;
 
@@ -118,9 +126,17 @@ export class Agent {
           hasToolCall = true;
           this.onToolCall?.(block.toolName, block.toolInput);
 
+          const reqId = record(
+            "tool",
+            "info",
+            `→ ${block.toolName} ${truncate(block.toolInput, 200)}`,
+            block.toolInput,
+          );
+
           if (this.tools.requiresConfirmation(block.toolName) && this.confirm) {
             const approved = await this.confirm(block.toolName, block.toolInput);
             if (!approved) {
+              recordCorrelated(reqId, "tool", "warn", `denied: ${block.toolName}`);
               toolResults.push({
                 type: "tool_result",
                 toolUseId: block.toolUseId,
@@ -131,9 +147,20 @@ export class Agent {
             }
           }
 
+          const start = Date.now();
           const { result, isError, risk, nextRecommended } = await this.tools.execute(
             block.toolName,
             block.toolInput,
+          );
+          const elapsed = Date.now() - start;
+          recordCorrelated(
+            reqId,
+            "tool",
+            isError ? "error" : "info",
+            isError
+              ? `← ${block.toolName} error (${elapsed}ms): ${truncate(result, 200)}`
+              : `← ${block.toolName} (${elapsed}ms, ${result.length} bytes)`,
+            result,
           );
 
           // Annotate the text that goes back to the model too (not just
@@ -160,4 +187,8 @@ export class Agent {
 
     throw new Error(`max turns (${this.maxTurns}) reached`);
   }
+}
+
+function truncate(s: string, n: number): string {
+  return s.length <= n ? s : s.slice(0, n) + "…";
 }
