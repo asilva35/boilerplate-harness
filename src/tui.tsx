@@ -8,6 +8,7 @@ import { Agent } from "./agent.js";
 import { buildCompactor } from "./context/compactor.js";
 import { reportFatal } from "./errors.js";
 import { harnessConfig } from "./harness-config.js";
+import { createMemoryStore, finalizeSession } from "./memory/index.js";
 import { loadConfig, registerMCPServers } from "./mcp/register.js";
 import type { MCPClient } from "./mcp/client.js";
 import { createProvider } from "./provider/index.js";
@@ -18,8 +19,11 @@ import { App } from "./ui/App.js";
 async function main() {
   const provider = createProvider();
 
+  const memorySession = await createMemoryStore();
+  const systemPrompt = harnessConfig.systemPrompt + (await memorySession.store.preamble());
+
   const tools = new ToolRegistry();
-  registerCatalogTools(tools, harnessConfig.tools, provider);
+  registerCatalogTools(tools, harnessConfig.tools, provider, memorySession.store);
 
   let mcpClients: MCPClient[] = [];
   const mcpConfig = await loadConfig("mcp.json");
@@ -39,7 +43,7 @@ async function main() {
   const agent = new Agent({
     provider,
     tools,
-    systemPrompt: harnessConfig.systemPrompt,
+    systemPrompt,
     compactor: buildCompactor(harnessConfig.compaction, provider),
     onToolCall: (name, rawInput) => console.log(`[tool] ${name} ${rawInput}`),
     onAssistantText: (text) => {
@@ -71,6 +75,7 @@ async function main() {
 
   await waitUntilExit();
   await Promise.all(mcpClients.map((c) => c.close()));
+  await finalizeSession(provider, agent.getMessages(), memorySession);
   console.log("\nBye!");
 }
 

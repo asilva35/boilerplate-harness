@@ -118,10 +118,12 @@ src/
 ├── tools/                    Tool registry and implementations
 │   ├── types.ts                 Tool interface (Zod schema)
 │   ├── registry.ts               ToolRegistry
-│   ├── catalog.ts                 Name → Tool map read by harness.config.json's "tools" list
-│   ├── bash.ts / read_file.ts / write_file.ts
+│   ├── catalog.ts                 Names read from harness.config.json's "tools" list
+│   ├── bash.ts / read_file.ts / write_file.ts / estimate_scope.ts / remember.ts / recall.ts
 ├── context/
-│   └── compactor.ts           Compaction strategies (SlidingWindow, NoCompaction, buildCompactor)
+│   └── compactor.ts           Compaction strategies (SlidingWindow, Summarize, NoCompaction, buildCompactor)
+├── subagent/                  Delegation (Phase 14): Subagent, SubagentRegistry, delegateTool, ResearchSubagent
+├── memory/                    Persistent memory (Phase 16): MemoryStore, SessionFiles, NoMemory, createMemoryStore
 ├── mcp/                      Model Context Protocol integration
 │   ├── client.ts               MCP session wrapper (stdio / HTTP)
 │   └── register.ts              Loads mcp.json and registers remote tools
@@ -280,6 +282,20 @@ Try it: ask the root agent something that requires investigating the filesystem 
 - `src/tools/estimate_scope.ts` (optional per the migration guide, built anyway): a lightweight, deliberately non-LLM self-check — given a task description and a guessed list of files, it counts them (deduplicated) and returns a verdict (`local` / `consider delegate_research` / `delegate_research strongly recommended, clarify if still unclear`) as a plain heuristic, not another model call. The system prompt nudges the agent to call it when it isn't sure how broad a task is, and skip it when the answer is obvious either way.
 
 Try it: ask for a one-line fix and confirm the agent handles it directly, no `delegate_research` call. Then ask something that requires reading several unrelated files to answer, and confirm it calls `delegate_research` (optionally after `estimate_scope`) before answering, instead of reading them itself one by one.
+
+## Phase 16: Persistent Memory Across Sessions (`remember`/`recall`)
+
+**Key concept:** context that survives the process closing. The agent writes facts/decisions via a tool during the session; at shutdown, the session itself gets auto-summarized; and the next session starts with a preamble of recent summaries already in its system prompt - no `recall` needed just to know what happened last time.
+
+- `src/memory/types.ts`: `MemoryStore` interface (`save`, `recall`, `preamble`) and an `Entry` shape (`time`, `kind`, `content`, `tags`).
+- `src/memory/no-memory.ts`: `NoMemory`, the do-nothing default - every method succeeds with empty output, so the harness runs identically whether or not persistent memory is set up.
+- `src/memory/session-files.ts`: `SessionFiles`, the default store - one markdown file per session under `.harness/sessions/`, with `.harness/index.json` as a fast-lookup layer (`recall` filters the index instead of opening every session file). `save()` only appends to an in-memory draft; nothing hits disk until `close()`, which assembles the file (grouped into Facts/Decisions/Preferences/Notes sections) and appends an index record. A session with no `save()` calls never touches disk at all.
+- `src/memory/summarize-session.ts`: at shutdown, asks the model itself to summarize the whole conversation (reusing `renderTranscript` from Phase 13's `Summarize` strategy) and parses out a one-paragraph summary plus 3-5 tags. Best-effort - a failed call becomes a placeholder summary instead of blocking shutdown.
+- `src/memory/index.ts`: `createMemoryStore()` (tries `SessionFiles`, falls back to `NoMemory` with a warning if `.harness/` can't be set up) and `finalizeSession()` (summarize + save + close, called once at shutdown from all three entry points instead of duplicating that sequence three times).
+- `src/tools/remember.ts` / `src/tools/recall.ts`: `remember(content, kind?, tags?)` writes an entry; `recall(query, limit?)` does a case-insensitive substring search across session summaries and tags.
+- Each entry point's system prompt becomes `harnessConfig.systemPrompt + await memoryStore.preamble()` at startup, and calls `finalizeSession()` in its shutdown path (`cleanup()` in `index.ts`/`tui.tsx`, the `SIGINT` handler in `server.ts`, since the web entry point's "one global session" model from Phase 6 already treats the whole server run as a single conversation).
+
+Try it: ask the agent to remember a preference, close the session (Ctrl+C or Ctrl+D), start it again, and check the system prompt already includes it under "Recent sessions" without asking for `recall` explicitly.
 
 More phases land here as the project grows — see the commit history for the full progression.
 
