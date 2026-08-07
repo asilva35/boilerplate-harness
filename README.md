@@ -370,6 +370,20 @@ Try it: connect with `?role=client` and confirm the model has no `bash` tool ava
 
 Try it: open two concurrent sessions, one with no `?profile=` (or `?profile=default`) and one with `?profile=readonly` - confirm the first has `bash` and the second doesn't, and that neither's tool-pack or system prompt leaks into the other.
 
+## Phase 23: Capability Management per Context
+
+**Key concept:** refines Phase 14 - today `research`'s tool pack (`read_file` only) is hardcoded in `ResearchSubagent`'s own code. This phase formalizes it as configuration: which tools/MCPs a *particular subagent* gets, not just which tools a deployment has overall (that's Phases 8/21/22). Idea from Alan Buscaglia's video, which calls this capability management, distinct from just "install the MCP server." No equivalent in the Go original.
+
+A note on the guide itself: its Phase 23 text says it extends "`tools.json` (Phase 24)" - but Phase 24 (tool-packs as their own config file) hasn't been built yet, it comes right after. That looks like a leftover cross-reference from the Session 7 phase reordering that didn't get updated when the two swapped positions. Asked Eloy how to resolve it before writing any code: extend the config that already exists (`harness.config.json`, Phase 8) now, and revisit whether it's worth its own file when Phase 24 actually lands, rather than building Phase 24 out of order to match the guide's literal (and likely stale) wording.
+
+- `harness-config.ts`: `harnessConfig.subagents` is an optional `Record<string, string[]>` (default `{}`), parallel to `roles` - each key names a subagent, its value the tool names it gets. Not validated at config-load time the way `roles` is against `tools`: a subagent's tool pack can legitimately name an MCP tool, and MCP servers aren't connected yet when the config file is parsed (that's later, async, in each entry point's `main()`).
+- `tools/catalog.ts`: `buildToolPack(names, connectedMCP)` resolves a list of names into a fresh `ToolRegistry`, sourced from either `STATIC_CATALOG` or an already-connected MCP server's tools - the same pool a deployment's own tools draw from, minus `delegate_*`/`remember`/`recall` (a subagent delegating to itself or touching memory isn't a supported case). An unresolvable name throws `ConfigError` at the point a subagent is actually built, the same fail-closed spirit as Phase 21's `resolveRoleTools`. `DEFAULT_SUBAGENT_TOOLS` (`research: ["read_file"]`) preserves the exact pre-Phase-23 behavior for any deployment that doesn't configure `subagents` at all.
+- `src/subagent/research.ts`: `ResearchSubagent` now takes a pre-built `ToolRegistry` in its constructor instead of hardcoding `read_file` inside `run()` - the registry itself is stateless and reused across calls, only the `Agent`'s conversation history is still rebuilt fresh every `run()`.
+- `ToolRegistry` gains `get(name)`, so `buildToolPack()` can pull a specific already-wrapped MCP tool out of a throwaway registry built via the existing `registerMCPTools()`, instead of duplicating how an MCP tool gets constructed.
+- Ordering fix in `index.ts`/`tui.tsx`: both used to call `registerCatalogTools()` *before* connecting to MCP servers, so a subagent built there could never see an MCP tool even if configured to use one. Reordered to connect MCP first (mirrors what `SessionManager`/`server.ts` already did since Phase 20) - `registerMCPServers()` (connect+register combined) stayed as the convenience wrapper it's always been, these two entry points now call the split `connectMCPServers()` + `registerMCPTools()` around `registerCatalogTools()` instead.
+
+Try it: with a real MCP filesystem server connected (`mcp.json` per `mcp.example.json`), set `"subagents": { "research": ["filesystem_read_text_file"] }` in `harness.config.json` (no `read_file`, no `bash`) and ask the root agent to delegate a file-lookup task - `research` reads the file entirely through the MCP tool, never touching the local `read_file`/`bash` tools, with zero code changes.
+
 More phases land here as the project grows — see the commit history for the full progression.
 
 ## License

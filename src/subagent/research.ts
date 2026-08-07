@@ -1,17 +1,19 @@
 // Equivalent to internal/subagent/research.go: a read-only investigation
-// subagent - read_file only, no bash, a tight turn budget, and its own
-// system prompt so it stays on task instead of inheriting the root
+// subagent - read_file only by default, no bash, a tight turn budget, and
+// its own system prompt so it stays on task instead of inheriting the root
 // agent's general-purpose one.
 //
-// Each run() builds a brand new Agent with a fresh ToolRegistry - no
-// state carries over between calls, same as Go's Research.Run creating a
-// new agent.Agent every time.
+// Each run() builds a brand new Agent - no conversation history carries
+// over between calls, same as Go's Research.Run creating a new agent.Agent
+// every time. The ToolRegistry itself (Phase 23) is built once by the
+// caller (tools/catalog.ts's buildToolPack(), from harness.config.json's
+// "subagents") and reused across calls - it's stateless, so there's
+// nothing to reset between runs.
 
 import { Agent } from "../agent.js";
 import type { Provider } from "../provider/types.js";
 import type { Risk } from "../tools/types.js";
-import { readFileTool } from "../tools/read_file.js";
-import { ToolRegistry } from "../tools/registry.js";
+import type { ToolRegistry } from "../tools/registry.js";
 import type { Subagent, SubagentResult } from "./types.js";
 
 const SYSTEM_PROMPT = `You are a research subagent. Your job is to investigate the
@@ -64,15 +66,15 @@ export class ResearchSubagent implements Subagent {
     "context window, so it can explore freely without polluting your conversation. Always pass " +
     "a concrete task description, not just the user's literal question.";
 
-  constructor(private readonly provider: Provider) {}
+  constructor(
+    private readonly provider: Provider,
+    private readonly tools: ToolRegistry,
+  ) {}
 
   async run(task: string): Promise<SubagentResult> {
-    const tools = new ToolRegistry();
-    tools.register(readFileTool);
-
     const agent = new Agent({
       provider: this.provider,
-      tools,
+      tools: this.tools,
       systemPrompt: SYSTEM_PROMPT,
       maxTurns: 10,
     });

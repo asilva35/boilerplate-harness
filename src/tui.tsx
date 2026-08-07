@@ -9,8 +9,7 @@ import { buildCompactor } from "./context/compactor.js";
 import { reportFatal } from "./errors.js";
 import { harnessConfig } from "./harness-config.js";
 import { createMemoryStore, finalizeSession } from "./memory/index.js";
-import { loadConfig, registerMCPServers } from "./mcp/register.js";
-import type { MCPClient } from "./mcp/client.js";
+import { connectMCPServers, loadConfig, registerMCPTools } from "./mcp/register.js";
 import { createProvider } from "./provider/index.js";
 import { SkillRegistry } from "./skills/registry.js";
 import { registerCatalogTools } from "./tools/catalog.js";
@@ -24,14 +23,23 @@ async function main() {
   const systemPrompt = harnessConfig.systemPrompt + (await memorySession.store.preamble());
   const skillRegistry = await SkillRegistry.load();
 
-  const tools = new ToolRegistry();
-  registerCatalogTools(tools, harnessConfig.tools, provider, memorySession.store, skillRegistry);
-
-  let mcpClients: MCPClient[] = [];
+  // Connected before registerCatalogTools() below (Phase 23) so a
+  // subagent's tool pack (harnessConfig.subagents) can include an MCP
+  // tool - it needs the servers already dialed to resolve one by name.
   const mcpConfig = await loadConfig("mcp.json");
-  if (mcpConfig) {
-    mcpClients = await registerMCPServers(mcpConfig, tools);
-  }
+  const connectedMCP = mcpConfig ? await connectMCPServers(mcpConfig) : [];
+
+  const tools = new ToolRegistry();
+  registerCatalogTools(
+    tools,
+    harnessConfig.tools,
+    provider,
+    memorySession.store,
+    skillRegistry,
+    harnessConfig.subagents,
+    connectedMCP,
+  );
+  registerMCPTools(tools, connectedMCP);
 
   // The real confirm is only wired up once App mounts (it needs React
   // state for the live [y/N] prompt). Until then, this bridge is the
@@ -77,7 +85,7 @@ async function main() {
   );
 
   await waitUntilExit();
-  await Promise.all(mcpClients.map((c) => c.close()));
+  await Promise.all(connectedMCP.map((c) => c.client.close()));
   await finalizeSession(provider, agent.getMessages(), memorySession);
   console.log("\nBye!");
 }

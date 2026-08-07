@@ -12,6 +12,7 @@ function makeConfig(overrides: Partial<HarnessConfig> = {}): HarnessConfig {
     tools: ["read_file", "write_file", "bash"],
     compaction: { strategy: "none", keepLast: 20, tokenThreshold: 4000, summarizeThreshold: 40 },
     roles: { client: ["read_file"] },
+    subagents: {},
     ...overrides,
   };
 }

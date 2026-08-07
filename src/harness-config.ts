@@ -30,11 +30,20 @@ const compactionSchema = z
 // non-admin caller (e.g. a "client" role with no bash/write_file). Opt-in -
 // an empty map (the default) means every session gets the full `tools`
 // list, identical to pre-Phase-21 behavior.
+// Phase 23: per-subagent tool packs (e.g. give `research` a filesystem_*
+// MCP tool but never `bash`), overriding tools/catalog.ts's hardcoded
+// DEFAULT_SUBAGENT_TOOLS. Not validated here the way `roles` is against
+// `tools` above - a subagent's tool pack can legitimately name an MCP
+// tool, and MCP servers aren't connected yet at config-load time (that
+// happens later, async, in each entry point's main()). Resolved and
+// validated at the point a subagent is actually built - see
+// tools/catalog.ts's buildToolPack().
 const harnessConfigSchema = z.object({
   systemPrompt: z.string().min(1),
   tools: z.array(z.string()),
   compaction: compactionSchema,
   roles: z.record(z.string(), z.array(z.string())).default({}),
+  subagents: z.record(z.string(), z.array(z.string())).default({}),
 });
 
 export type HarnessConfig = z.infer<typeof harnessConfigSchema>;

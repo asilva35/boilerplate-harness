@@ -14,6 +14,14 @@ export class ToolRegistry {
     this.tools.set(tool.name, tool);
   }
 
+  // Phase 23: lets catalog.ts's buildToolPack() pull specific Tool objects
+  // out of a registry (e.g. one built by registerMCPTools) to hand to a
+  // subagent's own filtered registry, without duplicating how a tool is
+  // constructed.
+  get(name: string): Tool | undefined {
+    return this.tools.get(name);
+  }
+
   definitions(): ToolDef[] {
     return [...this.tools.values()]
       .sort((a, b) => a.name.localeCompare(b.name))

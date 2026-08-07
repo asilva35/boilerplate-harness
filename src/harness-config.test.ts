@@ -21,6 +21,7 @@ function config(overrides: Partial<HarnessConfig> = {}): HarnessConfig {
     tools: ["read_file", "write_file", "bash"],
     compaction: COMPACTION,
     roles: {},
+    subagents: {},
     ...overrides,
   };
 }

@@ -110,7 +110,15 @@ export class SessionManager {
     const config = this.opts.profiles.get(profile);
     const toolNames = resolveRoleTools(config, role);
     const tools = new ToolRegistry();
-    registerCatalogTools(tools, toolNames, this.opts.provider, this.opts.memoryStore, this.opts.skillRegistry);
+    registerCatalogTools(
+      tools,
+      toolNames,
+      this.opts.provider,
+      this.opts.memoryStore,
+      this.opts.skillRegistry,
+      config.subagents, // Phase 23: per-subagent tool packs, from this session's own profile
+      this.opts.connectedMCP,
+    );
     // Not role- or profile-gated: MCP servers are a separate opt-in
     // (mcp.json), not part of any harness.config.json's tools/roles, and
     // every MCP tool already requires approval unconditionally regardless
