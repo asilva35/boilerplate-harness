@@ -49,20 +49,32 @@ npm test             # node:test, no API key needed
 
 ## Configuration
 
-Two separate files, on purpose:
+Three separate files, on purpose:
 
 - **`.env`** — secrets: API keys, which provider/model to use. Never committed.
-- **`harness.config.json`** — per-deployment behavior: system prompt, which local tools load, compaction tuning. **Committed**, like `vite.config.ts` — this is what you edit to turn this boilerplate into a different harness, instead of forking code.
+- **`harness.config.json`** — per-deployment behavior: system prompt, compaction tuning. **Committed**, like `vite.config.ts` — this is what you edit to turn this boilerplate into a different harness, instead of forking code.
+- **`tools.json`** — what the harness can reach: local tools, roles (Phase 21), per-subagent tool packs (Phase 23). **Committed**, analogous to `mcp.json` but for this project's own tools/subagents rather than external MCP servers (split out from `harness.config.json` in Phase 24, so registering/restricting a tool is a one-line config change here rather than editing deployment behavior).
 
 ```jsonc
+// harness.config.json
 {
   "systemPrompt": "...",
-  "tools": ["read_file", "write_file", "bash"],
   "compaction": { "strategy": "sliding", "keepLast": 20, "tokenThreshold": 4000 }
 }
 ```
 
-`tools` names must match a key in `src/tools/catalog.ts`'s `TOOL_CATALOG`; an unknown name fails fast with a clear error instead of silently registering nothing. `compaction` is optional (defaults shown above); `"strategy": "none"` disables compaction entirely.
+```jsonc
+// tools.json
+{
+  "tools": ["read_file", "write_file", "bash"],
+  "roles": { "client": ["read_file"] },
+  "subagents": { "research": ["read_file"] }
+}
+```
+
+`tools` names must match a key in `src/tools/catalog.ts`'s `STATIC_CATALOG` (or `delegate_<subagent>`/`remember`/`recall`); an unknown name fails fast with a clear error instead of silently registering nothing. `compaction`/`roles`/`subagents` are all optional (defaults shown above / empty); `"strategy": "none"` disables compaction entirely.
+
+Multiple deployment **profiles** (Phase 22) can coexist: `harness.readonly.config.json` + `tools.readonly.json` ship as a second example (no `bash`/`write_file` at all) - see that phase's section below for how a session picks one.
 
 ## Scaffolding a new harness
 
@@ -70,7 +82,7 @@ Two separate files, on purpose:
 npm run scaffold -- ../my-vertical-harness
 ```
 
-Copies the core (everything except `harness.config.json` itself) into a new directory, then asks a couple of questions — system prompt, which tools to enable — and writes a fresh `harness.config.json` from the answers. No file in *this* repo is touched.
+Copies the core (everything except `harness.config.json`/`tools.json` themselves) into a new directory, then asks a couple of questions — system prompt, which tools to enable — and writes a fresh `harness.config.json` + `tools.json` from the answers. No file in *this* repo is touched.
 
 ## Commands inside a session
 
@@ -97,9 +109,10 @@ Its tools show up alongside the local ones, under `"<server>_<tool>"`. By defaul
 ## Project structure
 
 ```
-harness.config.json        Per-deployment behavior: system prompt, tools, compaction (committed)
+harness.config.json        Per-deployment behavior: system prompt, compaction (committed)
+tools.json                  What the harness can reach: tools, roles, subagents (committed)
 scripts/
-└── scaffold.ts               Copies the core into a new project with a fresh harness.config.json
+└── scaffold.ts               Copies the core into a new project with fresh harness.config.json + tools.json
 src/
 ├── index.ts              Plain console REPL (entry point 1)
 ├── tui.tsx                Ink TUI REPL (entry point 2)
@@ -110,7 +123,7 @@ src/
 ├── commands.ts             "/" command registry
 ├── debug.ts                Ring-buffer debug log (record/recordCorrelated/pair/snapshot)
 ├── config.ts               Environment variables (secrets, provider/model selection)
-├── harness-config.ts        Loads and validates harness.config.json
+├── harness-config.ts        Loads/validates harness.config.json + tools.json, ProfileRegistry (Phase 22)
 ├── provider/                LLM abstraction layer
 │   ├── types.ts               Message, Block, ToolDef, Provider interface
 │   ├── anthropic.ts            Anthropic adapter
@@ -119,7 +132,7 @@ src/
 ├── tools/                    Tool registry and implementations
 │   ├── types.ts                 Tool interface (Zod schema)
 │   ├── registry.ts               ToolRegistry
-│   ├── catalog.ts                 Names read from harness.config.json's "tools" list
+│   ├── catalog.ts                 Names read from tools.json's "tools" list; buildToolPack() (Phase 23)
 │   ├── bash.ts / read_file.ts / write_file.ts / estimate_scope.ts / remember.ts / recall.ts
 ├── context/
 │   └── compactor.ts           Compaction strategies (SlidingWindow, Summarize, NoCompaction, buildCompactor)
@@ -382,7 +395,21 @@ A note on the guide itself: its Phase 23 text says it extends "`tools.json` (Pha
 - `ToolRegistry` gains `get(name)`, so `buildToolPack()` can pull a specific already-wrapped MCP tool out of a throwaway registry built via the existing `registerMCPTools()`, instead of duplicating how an MCP tool gets constructed.
 - Ordering fix in `index.ts`/`tui.tsx`: both used to call `registerCatalogTools()` *before* connecting to MCP servers, so a subagent built there could never see an MCP tool even if configured to use one. Reordered to connect MCP first (mirrors what `SessionManager`/`server.ts` already did since Phase 20) - `registerMCPServers()` (connect+register combined) stayed as the convenience wrapper it's always been, these two entry points now call the split `connectMCPServers()` + `registerMCPTools()` around `registerCatalogTools()` instead.
 
-Try it: with a real MCP filesystem server connected (`mcp.json` per `mcp.example.json`), set `"subagents": { "research": ["filesystem_read_text_file"] }` in `harness.config.json` (no `read_file`, no `bash`) and ask the root agent to delegate a file-lookup task - `research` reads the file entirely through the MCP tool, never touching the local `read_file`/`bash` tools, with zero code changes.
+Try it: with a real MCP filesystem server connected (`mcp.json` per `mcp.example.json`), set `"subagents": { "research": ["filesystem_read_text_file"] }` in `tools.json` (Phase 24 moved this field here from `harness.config.json` - no `read_file`, no `bash`) and ask the root agent to delegate a file-lookup task - `research` reads the file entirely through the MCP tool, never touching the local `read_file`/`bash` tools, with zero code changes.
+
+## Phase 24: Tool-Packs Configurable per Vertical
+
+**Key concept:** the set of tools a deployment loads should be configuration, not code registered by hand in each entry point - same spirit as `mcp.json`, but for this project's own tools/subagents.
+
+Another note on the guide, same kind as Phase 23's: its Phase 24 text describes registering tools by hand in code (`tools.register(bashTool)`, etc.) as today's problem - but that was already solved by Phase 8, which put the tool list in `harness.config.json` and had every entry point call `registerCatalogTools()` against it instead of hardcoding. Phase 8's own text even says it stores "a reference to `tools.json` (Phase 24)" - the original plan was clearly a two-file split from the start, but what actually shipped in Phase 8 kept the tools list *inline*. So Phase 24, as literally written, was already functionally satisfied - just not in the shape (a separate file) it originally called for. Asked Eloy how to resolve it before writing code: do the literal split anyway, for the file-naming symmetry with `mcp.json` and because a smaller `harness.config.json` (just system prompt + compaction) reads more clearly as "behavior" separate from "capabilities."
+
+- `harness-config.ts`: the single `harnessConfigSchema` split into two Zod schemas - `harnessConfigSchema` (`systemPrompt`, `compaction`) and `toolsConfigSchema` (`tools`, `roles`, `subagents`). The exported `HarnessConfig` type is their **intersection** - the exact same merged shape every consumer (`resolveRoleTools`, `SessionManager`, `tools/catalog.ts`, tests) already worked with, so nothing downstream of loading needed to change, only how a config gets assembled.
+- `loadHarnessSection(path)` / `loadToolsSection(path)` parse each file in isolation. `loadProfileConfig(profileName)` ties them together by the same naming convention Phase 22 already established for the harness half: `"default"` → bare `harness.config.json` + `tools.json`; any other profile `p` → `harness.p.config.json` + `tools.p.json`. It merges both, then runs `validateRoles()` on the combined result (roles are checked against `tools`, and both now live in the same file, but validation stays a single call site on the merged shape rather than duplicated per section). Replaces the old single-file `loadHarnessConfig(path)`.
+- `ProfileRegistry` got simpler, not more complex: it no longer builds file paths itself, just delegates to `loadProfileConfig(name)` and caches the result - the profile-name-to-filenames convention now lives in exactly one place.
+- Committed files: `harness.config.json` now holds only `systemPrompt`/`compaction`; `tools.json` (new) holds `tools`/`roles`/`subagents`. `harness.readonly.config.json` + `tools.readonly.json` (new) mirror the same split for the Phase 22 example profile.
+- `scripts/scaffold.ts` writes both files from the same prompts as before (system prompt, which tools to enable) - `roles`/`subagents` aren't prompted for, left as opt-in refinements for the new project to hand-edit if it needs them.
+
+Try it: edit `tools.json` to drop `"bash"` and `"write_file"` from the `tools` array (read-only tools only) and confirm the model starts without either one available - no `.ts` file touched, matching the guide's practical test exactly.
 
 More phases land here as the project grows — see the commit history for the full progression.
 

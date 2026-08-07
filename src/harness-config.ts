@@ -5,10 +5,17 @@
 //
 // This is deliberately a *second*, separate module from config.ts: env
 // vars (config.ts) are secrets and never committed; harness.config.json
-// (this file) is deployment behavior — system prompt, which tools load,
-// how compaction is tuned — and IS meant to be committed, the same way
-// vite.config.ts is committed while .env isn't. Forking this project to
-// build a new harness should mean editing this one file, not forking code.
+// (this file) is deployment behavior — system prompt, how compaction is
+// tuned — and IS meant to be committed, the same way vite.config.ts is
+// committed while .env isn't. Forking this project to build a new harness
+// should mean editing committed config files, not forking code.
+//
+// Phase 24: split further, on purpose. What tools/roles/subagents a
+// deployment loads now lives in a companion tools.json (analogous to
+// mcp.json) instead of inline here - so registering a tool is config, the
+// same spirit Phase 8 already had for the rest of deployment behavior,
+// just carried one step further for the piece that changes most often
+// when adapting this boilerplate to a new vertical.
 
 import { readFileSync } from "node:fs";
 import { z } from "zod";
@@ -26,27 +33,35 @@ const compactionSchema = z
   })
   .default({ strategy: "sliding", keepLast: 20, tokenThreshold: 4000, summarizeThreshold: 40 });
 
-// Phase 21: named roles, each carving out a subset of `tools` for a
-// non-admin caller (e.g. a "client" role with no bash/write_file). Opt-in -
-// an empty map (the default) means every session gets the full `tools`
-// list, identical to pre-Phase-21 behavior.
-// Phase 23: per-subagent tool packs (e.g. give `research` a filesystem_*
-// MCP tool but never `bash`), overriding tools/catalog.ts's hardcoded
-// DEFAULT_SUBAGENT_TOOLS. Not validated here the way `roles` is against
-// `tools` above - a subagent's tool pack can legitimately name an MCP
-// tool, and MCP servers aren't connected yet at config-load time (that
-// happens later, async, in each entry point's main()). Resolved and
-// validated at the point a subagent is actually built - see
-// tools/catalog.ts's buildToolPack().
+// harness.<profile>.config.json: how the harness behaves.
 const harnessConfigSchema = z.object({
   systemPrompt: z.string().min(1),
-  tools: z.array(z.string()),
   compaction: compactionSchema,
+});
+
+// tools.<profile>.json: what the harness can reach. Phase 21: `roles`,
+// each carving out a subset of `tools` for a non-admin caller (e.g. a
+// "client" role with no bash/write_file). Opt-in - an empty map (the
+// default) means every session gets the full `tools` list. Phase 23:
+// `subagents`, per-subagent tool packs (e.g. give `research` a
+// filesystem_* MCP tool but never `bash`), overriding
+// tools/catalog.ts's hardcoded DEFAULT_SUBAGENT_TOOLS. Not validated here
+// the way `roles` is against `tools` below - a subagent's tool pack can
+// legitimately name an MCP tool, and MCP servers aren't connected yet at
+// config-load time (that happens later, async, in each entry point's
+// main()). Resolved and validated at the point a subagent is actually
+// built - see tools/catalog.ts's buildToolPack().
+const toolsConfigSchema = z.object({
+  tools: z.array(z.string()),
   roles: z.record(z.string(), z.array(z.string())).default({}),
   subagents: z.record(z.string(), z.array(z.string())).default({}),
 });
 
-export type HarnessConfig = z.infer<typeof harnessConfigSchema>;
+// The merged shape every consumer (resolveRoleTools, SessionManager,
+// tools/catalog.ts, ...) actually works with - unchanged since before
+// Phase 24, so loading from two files instead of one doesn't ripple past
+// this module. Only how a HarnessConfig gets assembled changes below.
+export type HarnessConfig = z.infer<typeof harnessConfigSchema> & z.infer<typeof toolsConfigSchema>;
 
 // "admin" is reserved: it always means the full `tools` list and must
 // never be declared in `roles` - a config author trying to give "admin" a
@@ -56,15 +71,15 @@ export function validateRoles(config: HarnessConfig): void {
   if ("admin" in config.roles) {
     throw new ConfigError(
       '"admin" is a reserved role name (it always means the full "tools" list) - remove it from ' +
-        '"roles" in harness.config.json.',
+        '"roles" in tools.json.',
     );
   }
   for (const [role, tools] of Object.entries(config.roles)) {
     for (const tool of tools) {
       if (!config.tools.includes(tool)) {
         throw new ConfigError(
-          `harness.config.json: role "${role}" lists tool "${tool}", which isn't in the top-level ` +
-            '"tools" array - a role can only narrow the full tool set, not add to it.',
+          `tools.json: role "${role}" lists tool "${tool}", which isn't in the top-level "tools" ` +
+            "array - a role can only narrow the full tool set, not add to it.",
         );
       }
     }
@@ -82,64 +97,87 @@ export function resolveRoleTools(config: HarnessConfig, role: string): string[] 
   const tools = config.roles[role];
   if (!tools) {
     throw new ConfigError(
-      `Unknown role "${role}" (no matching entry in harness.config.json's "roles"). ` +
+      `Unknown role "${role}" (no matching entry in tools.json's "roles"). ` +
         `Available roles: admin, ${Object.keys(config.roles).join(", ") || "(none configured)"}.`,
     );
   }
   return tools;
 }
 
-// Phase 22: generalized from the original load() (which only ever read
-// "harness.config.json") to take any path, so a ProfileRegistry can load
-// "harness.<profile>.config.json" files the same way without duplicating
-// this parse/validate logic.
-export function loadHarnessConfig(path: string): HarnessConfig {
+function readConfigFile(path: string, whatItHolds: string): unknown {
   let raw: string;
   try {
     raw = readFileSync(path, "utf-8");
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === "ENOENT") {
       throw new ConfigError(
-        `Missing ${path} in the current directory. This file holds per-deployment settings ` +
-          "(system prompt, tools, compaction) and is expected to exist — see harness.config.json " +
-          "in the repo root for the reference shape, or run this project's own copy of it if " +
-          "you're inside a scaffolded project.",
+        `Missing ${path} in the current directory. This file holds ${whatItHolds} and is expected ` +
+          `to exist — see ${path} in the repo root for the reference shape, or run this project's ` +
+          "own copy of it if you're inside a scaffolded project.",
       );
     }
     throw err;
   }
 
-  let parsed: unknown;
   try {
-    parsed = JSON.parse(raw);
+    return JSON.parse(raw);
   } catch (err) {
     throw new ConfigError(`${path} is not valid JSON: ${(err as Error).message}`);
   }
+}
 
-  const result = harnessConfigSchema.safeParse(parsed);
+// Parses harness.<profile>.config.json in isolation - system prompt and
+// compaction only, nothing tool-related.
+export function loadHarnessSection(path: string): z.infer<typeof harnessConfigSchema> {
+  const result = harnessConfigSchema.safeParse(readConfigFile(path, "per-deployment behavior (system prompt, compaction)"));
   if (!result.success) {
     throw new ConfigError(`${path} is invalid: ${result.error.message}`);
   }
-  validateRoles(result.data);
   return result.data;
+}
+
+// Parses tools.<profile>.json in isolation - tools/roles/subagents only.
+// Deliberately doesn't run validateRoles() itself: that needs the merged
+// HarnessConfig (roles are checked against `tools`, which lives in this
+// same file, so in practice it could - but loadProfileConfig() is the one
+// place that owns "assemble, then validate the merged result", to keep a
+// single validation call site as more sections potentially get added).
+export function loadToolsSection(path: string): z.infer<typeof toolsConfigSchema> {
+  const result = toolsConfigSchema.safeParse(readConfigFile(path, 'what the harness can reach (tools/roles/subagents) - analogous to mcp.json'));
+  if (!result.success) {
+    throw new ConfigError(`${path} is invalid: ${result.error.message}`);
+  }
+  return result.data;
+}
+
+// Assembles one profile's effective HarnessConfig from its two files.
+// "default" (Phase 22's convention) uses the bare harness.config.json /
+// tools.json; any other profile name `p` inserts itself the same way
+// Phase 22 already did for the harness section: harness.p.config.json /
+// tools.p.json.
+export function loadProfileConfig(profileName: string): HarnessConfig {
+  const suffix = profileName === "default" ? "" : `${profileName}.`;
+  const harness = loadHarnessSection(`harness.${suffix}config.json`);
+  const tools = loadToolsSection(`tools.${suffix}json`);
+  const merged: HarnessConfig = { ...harness, ...tools };
+  validateRoles(merged);
+  return merged;
 }
 
 // Computed once at import time, same pattern config.ts already uses for
 // env vars — every entry point imports the same resolved singleton instead
-// of re-reading and re-parsing the file per call site. Also doubles as the
-// "default" profile's config for server.ts's ProfileRegistry below, so the
-// file is never read/parsed twice.
-export const harnessConfig = loadHarnessConfig("harness.config.json");
+// of re-reading and re-parsing the files per call site. Also doubles as the
+// "default" profile's config for ProfileRegistry below, so the files are
+// never read/parsed twice.
+export const harnessConfig = loadProfileConfig("default");
 
-// Phase 22: a session can now resolve its own effective harness.config.json
-// instead of every session in the process sharing the one global
-// `harnessConfig` above - different system prompt, different tool-pack.
-// "default" always maps to harness.config.json (the file already loaded
-// into `harnessConfig`, reused instead of re-read); any other profile name
-// `p` maps to harness.<p>.config.json in the same directory. Configs are
+// Phase 22: a session can now resolve its own effective config instead of
+// every session in the process sharing the one global `harnessConfig`
+// above - different system prompt, different tool-pack. Configs are
 // loaded lazily (only profiles a session actually asks for get read off
-// disk) and cached - re-parsing and re-validating on every session creation
-// would be pure waste, the file doesn't change while the process runs.
+// disk) and cached - re-parsing and re-validating four files on every
+// session creation would be pure waste, they don't change while the
+// process runs.
 export class ProfileRegistry {
   private readonly cache = new Map<string, HarnessConfig>([["default", harnessConfig]]);
 
@@ -147,7 +185,7 @@ export class ProfileRegistry {
     const cached = this.cache.get(name);
     if (cached) return cached;
 
-    const config = loadHarnessConfig(`harness.${name}.config.json`);
+    const config = loadProfileConfig(name);
     this.cache.set(name, config);
     return config;
   }

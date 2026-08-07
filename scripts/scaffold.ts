@@ -1,8 +1,9 @@
 // Phase 8: scaffolds a new harness project from this boilerplate's core.
 // No Go equivalent — same spirit as `npm create vite@latest`: copy the
 // reusable code as-is, then ask a few questions to generate a fresh
-// harness.config.json, instead of forking this repo and hand-editing
-// three entry points to change the system prompt or which tools load.
+// harness.config.json + tools.json (Phase 24 split the latter out), instead
+// of forking this repo and hand-editing three entry points to change the
+// system prompt or which tools load.
 
 import { access, cp, mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
@@ -11,9 +12,9 @@ import { stdin, stdout } from "node:process";
 import { catalogToolNames } from "../src/tools/catalog.js";
 
 // Everything a scaffolded project needs, copied as-is. Deliberately
-// excludes harness.config.json (regenerated below from the prompts) and
-// anything gitignored (.env, mcp.json, node_modules, dist) or repo
-// plumbing (.git) that a fresh project shouldn't inherit.
+// excludes harness.config.json/tools.json (regenerated below from the
+// prompts) and anything gitignored (.env, mcp.json, node_modules, dist)
+// or repo plumbing (.git) that a fresh project shouldn't inherit.
 const CORE_ENTRIES = ["src", "package.json", "tsconfig.json", ".nvmrc", ".env.example", ".gitignore", "README.md"];
 
 async function main() {
@@ -59,16 +60,17 @@ async function main() {
 
   // Compaction isn't prompted for — sensible default matching this repo's
   // own reference harness.config.json, editable by hand afterwards like
-  // any other part of the scaffolded project.
+  // any other part of the scaffolded project. roles/subagents aren't
+  // prompted for either - they're opt-in refinements (Phases 21/23) on
+  // top of the tool list this does ask about, left for the new project to
+  // add by hand if it needs them.
   const harnessConfig = {
     systemPrompt,
-    tools,
     compaction: { strategy: "sliding", keepLast: 20, tokenThreshold: 4000 },
   };
-  await writeFile(
-    path.join(target, "harness.config.json"),
-    JSON.stringify(harnessConfig, null, 2) + "\n",
-  );
+  const toolsConfig = { tools };
+  await writeFile(path.join(target, "harness.config.json"), JSON.stringify(harnessConfig, null, 2) + "\n");
+  await writeFile(path.join(target, "tools.json"), JSON.stringify(toolsConfig, null, 2) + "\n");
 
   const pkgPath = path.join(target, "package.json");
   const pkg = JSON.parse(await readFile(pkgPath, "utf-8"));

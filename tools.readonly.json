@@ -1,0 +1,3 @@
+{
+  "tools": ["read_file", "delegate_research", "estimate_scope", "recall"]
+}
