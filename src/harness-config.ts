@@ -26,13 +26,59 @@ const compactionSchema = z
   })
   .default({ strategy: "sliding", keepLast: 20, tokenThreshold: 4000, summarizeThreshold: 40 });
 
+// Phase 21: named roles, each carving out a subset of `tools` for a
+// non-admin caller (e.g. a "client" role with no bash/write_file). Opt-in -
+// an empty map (the default) means every session gets the full `tools`
+// list, identical to pre-Phase-21 behavior.
 const harnessConfigSchema = z.object({
   systemPrompt: z.string().min(1),
   tools: z.array(z.string()),
   compaction: compactionSchema,
+  roles: z.record(z.string(), z.array(z.string())).default({}),
 });
 
 export type HarnessConfig = z.infer<typeof harnessConfigSchema>;
+
+// "admin" is reserved: it always means the full `tools` list and must
+// never be declared in `roles` - a config author trying to give "admin" a
+// restricted roster there almost certainly means something else, so this
+// fails loud instead of silently doing nothing.
+export function validateRoles(config: HarnessConfig): void {
+  if ("admin" in config.roles) {
+    throw new ConfigError(
+      '"admin" is a reserved role name (it always means the full "tools" list) - remove it from ' +
+        '"roles" in harness.config.json.',
+    );
+  }
+  for (const [role, tools] of Object.entries(config.roles)) {
+    for (const tool of tools) {
+      if (!config.tools.includes(tool)) {
+        throw new ConfigError(
+          `harness.config.json: role "${role}" lists tool "${tool}", which isn't in the top-level ` +
+            '"tools" array - a role can only narrow the full tool set, not add to it.',
+        );
+      }
+    }
+  }
+}
+
+// Resolves the tool names a session with the given role should get.
+// "admin" (also the default when no role is given at all - see
+// server.ts) always resolves to the full `tools` list, whether or not
+// `roles` is configured. Any other role name must be a key in `roles` -
+// an unrecognized role is a caller error and must fail closed, not
+// silently fall back to the full admin roster.
+export function resolveRoleTools(config: HarnessConfig, role: string): string[] {
+  if (role === "admin") return config.tools;
+  const tools = config.roles[role];
+  if (!tools) {
+    throw new ConfigError(
+      `Unknown role "${role}" (no matching entry in harness.config.json's "roles"). ` +
+        `Available roles: admin, ${Object.keys(config.roles).join(", ") || "(none configured)"}.`,
+    );
+  }
+  return tools;
+}
 
 function load(): HarnessConfig {
   let raw: string;
@@ -61,6 +107,7 @@ function load(): HarnessConfig {
   if (!result.success) {
     throw new ConfigError(`harness.config.json is invalid: ${result.error.message}`);
   }
+  validateRoles(result.data);
   return result.data;
 }
 

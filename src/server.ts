@@ -164,7 +164,23 @@ async function main() {
     const url = new URL(req.url ?? "/", "http://localhost");
     const sessionId = url.searchParams.get("session") ?? randomUUID();
     const userId = url.searchParams.get("user") ?? "local";
-    const session = sessionManager.get(sessionId, userId);
+    // Phase 21: ?role=<role>, same "no real auth yet" caveat as userId
+    // above - defaults to "admin" so a caller that never heard of roles
+    // gets exactly the pre-Phase-21 behavior (the full harnessConfig.tools
+    // list).
+    const role = url.searchParams.get("role") ?? "admin";
+
+    let session: Session;
+    try {
+      session = sessionManager.get(sessionId, userId, role);
+    } catch (err) {
+      // Unknown role, or a role mismatch against an already-open session -
+      // a caller error, not a server bug: tell just this socket and close,
+      // don't take down every other session.
+      socket.send(JSON.stringify({ type: "error", message: (err as Error).message } satisfies ServerMessage));
+      socket.close();
+      return;
+    }
 
     session.sockets.add(socket);
     debugSockets.add(socket);

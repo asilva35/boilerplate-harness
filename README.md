@@ -347,6 +347,17 @@ Try it: `/debug on`, trigger a tool call, then `/debug show` (defaults to the la
 
 Try it: open two URLs with different `?session=` values and confirm they're independent conversations; open two tabs with the same `?session=` and confirm they still share one, like Phase 6.
 
+## Phase 21: Roles and Permissions per User
+
+**Key concept:** multi-user without roles is just "more than one token" - what matters is that an end-user (`client`) gets a different subset of tools/approvals than an admin. No equivalent in the Go original.
+
+- `harness-config.ts`: `harnessConfig.roles` is an optional `Record<string, string[]>` (default `{}`) - each key names a role, its value the subset of the top-level `tools` list that role gets. Opt-in: an empty map means every session gets the full `tools` list, identical to pre-Phase-21 behavior. `"admin"` is reserved and always resolves to the full `tools` list - declaring it in `roles` is a config error, since it almost certainly means something else was intended. `resolveRoleTools(config, role)` does the resolution and throws a `ConfigError` for any role that isn't `"admin"` and isn't a key in `roles` - an unrecognized role fails closed, it never falls back to full access.
+- `src/session/manager.ts`: `SessionManager.get()`/`create()` now take a `role` alongside `sessionId`/`userId`. `Session.role` is fixed at creation - the `ToolRegistry` is one shared object for every socket attached to that session, so there's no such thing as two sockets on the same session seeing different tools. A reconnect to an existing session claiming a *different* role than it was created with is rejected outright rather than silently attached with the original role. MCP tools (`mcp.json`) stay outside role gating for now - they're a separate opt-in mechanism and every MCP tool already requires approval unconditionally (Phase 5); gating them per role is real scope, deferred.
+- `server.ts`'s WebSocket handshake reads `?role=<role>`, defaulting to `"admin"` - same "no real auth yet" caveat as `?user=` from Phase 20 (real tokens land in Phase 33). An unknown role, or a role that mismatches an already-open session, gets a single `{type:"error"}` message and the socket is closed - it never takes down the rest of the server.
+- `harness.config.json` ships a `client` role example (`read_file`, `delegate_research`, `estimate_scope`, `recall` - no `bash`, `write_file`, or `remember`) so the practical test below works against the repo as committed.
+
+Try it: connect with `?role=client` and confirm the model has no `bash` tool available at all (not merely one that asks for approval) - it isn't in `tools.definitions()`, so the model can't even attempt to call it.
+
 More phases land here as the project grows — see the commit history for the full progression.
 
 ## License
