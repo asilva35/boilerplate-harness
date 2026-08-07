@@ -5,9 +5,13 @@
 // against a WebSocket instead of console.log/Ink, same pattern as
 // registerConfirm in tui.tsx/App.tsx.
 //
-// Single global session: every connection shares the same Agent, like
-// several tabs of the same REPL. No queue or lock for concurrent inputs —
-// meant for personal use, not multi-user.
+// Phase 20 replaced the single global Agent this file used to build once
+// at startup with a SessionManager: N independent conversations, keyed by
+// a `?session=` query param on the WebSocket handshake. Several tabs with
+// the same id still share one conversation (the Phase 6 behavior), but
+// different ids no longer step on each other. No queue or lock for
+// concurrent inputs within a session — still meant for personal/small-team
+// use, not a production multi-tenant server.
 //
 // Bind exclusively to 127.0.0.1: bash and write_file are tools capable of
 // altering the system; they must never be reachable from the local
@@ -18,27 +22,23 @@
 // WebSocket protocol below — it's the same "sin magia" vanilla client
 // from Phase 6, still reachable at /legacy for reference.
 
+import { randomUUID } from "node:crypto";
 import { createServer, type ServerResponse } from "node:http";
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import { WebSocketServer, type WebSocket } from "ws";
-import { Agent } from "./agent.js";
+import type { Agent } from "./agent.js";
 import { runCommand } from "./commands.js";
-import { buildCompactor } from "./context/compactor.js";
 import { setSink } from "./debug.js";
-import type { DebugEvent } from "./debug.js";
-import { buildWriteDiff } from "./tools/diff.js";
 import { reportFatal } from "./errors.js";
 import { harnessConfig } from "./harness-config.js";
-import { createMemoryStore, finalizeSession } from "./memory/index.js";
-import { loadConfig, registerMCPServers } from "./mcp/register.js";
-import type { MCPClient } from "./mcp/client.js";
+import { createMemoryStore, finalizeSessions } from "./memory/index.js";
+import { connectMCPServers, loadConfig } from "./mcp/register.js";
 import { createProvider } from "./provider/index.js";
+import { SessionManager, type Session } from "./session/manager.js";
+import type { ClientMessage, ServerMessage } from "./session/protocol.js";
 import { SkillRegistry } from "./skills/registry.js";
-import { registerCatalogTools } from "./tools/catalog.js";
-import type { Risk } from "./tools/types.js";
-import { ToolRegistry } from "./tools/registry.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const WEB_PORT = Number(process.env.WEB_PORT) || 3003;
@@ -54,28 +54,6 @@ const MIME_TYPES: Record<string, string> = {
   ".ico": "image/x-icon",
   ".json": "application/json; charset=utf-8",
 };
-
-// Messages traveling server → client. `history` hydrates a new tab with
-// the conversation already in progress, reusing the same
-// Message[]/Block[] that agent.getMessages() exposes — no parallel log
-// kept around.
-type ServerMessage =
-  | { type: "history"; messages: ReturnType<Agent["getMessages"]> }
-  | { type: "user_text"; text: string }
-  | { type: "assistant_text"; text: string }
-  | { type: "text_delta"; text: string }
-  | { type: "tool_call"; name: string; input: string }
-  | { type: "risk_flag"; name: string; risk: Risk; nextRecommended?: string }
-  | { type: "debug_event"; event: DebugEvent }
-  | { type: "confirm_request"; name: string; input: string; diff?: string }
-  | { type: "mode"; mode: "thinking" | "idle" }
-  | { type: "error"; message: string }
-  | { type: "command_output"; text: string };
-
-// Messages client → server. `input` covers both normal messages and "/"
-// commands — the server dispatches them the same way index.ts does
-// (runCommand first, agent.send if it wasn't a command).
-type ClientMessage = { type: "input"; line: string } | { type: "confirm_response"; approved: boolean };
 
 // Serves the Phase 10 React build (web-app/dist). There's no client-side
 // router in this app, so an unmatched path only really matters for "/" -
@@ -111,6 +89,19 @@ async function serveWebApp(url: string, res: ServerResponse): Promise<void> {
   }
 }
 
+// Broadcasts to every socket attached to one session - the scoped
+// equivalent of the single global broadcast() this file had pre-Phase 20.
+// (Everything the Agent itself pushes - tool_call, assistant_text, etc. -
+// is already scoped the same way inside SessionManager; this covers the
+// handful of messages server.ts sends directly: user_text/mode/error/
+// command_output.)
+function broadcastTo(session: Session, msg: ServerMessage): void {
+  const payload = JSON.stringify(msg);
+  for (const socket of session.sockets) {
+    if (socket.readyState === socket.OPEN) socket.send(payload);
+  }
+}
+
 async function main() {
   const provider = createProvider();
 
@@ -118,49 +109,29 @@ async function main() {
   const systemPrompt = harnessConfig.systemPrompt + (await memorySession.store.preamble());
   const skillRegistry = await SkillRegistry.load();
 
-  const tools = new ToolRegistry();
-  registerCatalogTools(tools, harnessConfig.tools, provider, memorySession.store, skillRegistry);
-
-  let mcpClients: MCPClient[] = [];
   const mcpConfig = await loadConfig("mcp.json");
-  if (mcpConfig) {
-    mcpClients = await registerMCPServers(mcpConfig, tools);
-  }
+  const connectedMCP = mcpConfig ? await connectMCPServers(mcpConfig) : [];
 
-  const sockets = new Set<WebSocket>();
-  function broadcast(msg: ServerMessage): void {
-    const payload = JSON.stringify(msg);
-    for (const socket of sockets) {
+  const sessionManager = new SessionManager({
+    harnessConfig,
+    provider,
+    memoryStore: memorySession.store,
+    skillRegistry,
+    systemPrompt,
+    connectedMCP,
+  });
+
+  // Debug events (Phase 19) aren't scoped to a session - debug.ts is a
+  // process-wide singleton with no notion of which conversation triggered
+  // a given record() call, so every connected tab across every session
+  // sees the same live stream. Tracked separately from each session's own
+  // socket set for exactly that reason.
+  const debugSockets = new Set<WebSocket>();
+  setSink((event) => {
+    const payload = JSON.stringify({ type: "debug_event", event } satisfies ServerMessage);
+    for (const socket of debugSockets) {
       if (socket.readyState === socket.OPEN) socket.send(payload);
     }
-  }
-
-  // Phase 19: live-streams every recorded event to connected tabs. record()/
-  // recordCorrelated() already short-circuit when debug logging is off, so
-  // this sink simply never fires until "/debug on" - no separate gating
-  // needed here.
-  setSink((event) => broadcast({ type: "debug_event", event }));
-
-  // Same as pendingApproval in App.tsx: since the agent loop waits for the
-  // confirmation before continuing, there's never more than one pending at
-  // a time — no need for an id to correlate request/response.
-  let pendingApproval: { resolve: (approved: boolean) => void } | null = null;
-
-  const agent = new Agent({
-    provider,
-    tools,
-    systemPrompt,
-    compactor: buildCompactor(harnessConfig.compaction, provider),
-    onToolCall: (name, rawInput) => broadcast({ type: "tool_call", name, input: rawInput }),
-    onAssistantText: (text) => broadcast({ type: "assistant_text", text }),
-    onTextDelta: (chunk) => broadcast({ type: "text_delta", text: chunk }),
-    onRiskFlag: (name, risk, nextRecommended) => broadcast({ type: "risk_flag", name, risk, nextRecommended }),
-    confirm: (name, rawInput) =>
-      new Promise<boolean>((resolve) => {
-        pendingApproval = { resolve };
-        const diff = name === "write_file" ? buildWriteDiff(rawInput) : "";
-        broadcast({ type: "confirm_request", name, input: rawInput, diff: diff || undefined });
-      }),
   });
 
   const httpServer = createServer((req, res) => {
@@ -181,9 +152,23 @@ async function main() {
 
   const wss = new WebSocketServer({ server: httpServer });
 
-  wss.on("connection", (socket) => {
-    sockets.add(socket);
-    socket.send(JSON.stringify({ type: "history", messages: agent.getMessages() } satisfies ServerMessage));
+  wss.on("connection", (socket, req) => {
+    // Phase 20 handshake: ?session=<id> identifies or creates a
+    // conversation; ?user=<id> is a separate, deliberately loose
+    // identifier (real auth doesn't land until Phase 33's tokens) - a user
+    // can hold several sessions, so it's tracked apart from sessionId
+    // rather than reusing it. Neither client ships one, they're generated
+    // here and only meaningful for the lifetime of this connection unless
+    // the client remembers and resends the same id (see useHarnessSocket.ts
+    // and web/index.html).
+    const url = new URL(req.url ?? "/", "http://localhost");
+    const sessionId = url.searchParams.get("session") ?? randomUUID();
+    const userId = url.searchParams.get("user") ?? "local";
+    const session = sessionManager.get(sessionId, userId);
+
+    session.sockets.add(socket);
+    debugSockets.add(socket);
+    socket.send(JSON.stringify({ type: "history", messages: session.agent.getMessages() } satisfies ServerMessage));
 
     socket.on("message", (raw) => {
       let msg: ClientMessage;
@@ -194,8 +179,8 @@ async function main() {
       }
 
       if (msg.type === "confirm_response") {
-        pendingApproval?.resolve(msg.approved);
-        pendingApproval = null;
+        session.pendingApproval?.resolve(msg.approved);
+        session.pendingApproval = null;
         return;
       }
 
@@ -206,42 +191,50 @@ async function main() {
         // Broadcast the text exactly as typed, not just the reply — this
         // way a second tab sees both what was typed and what the model
         // answered, whether it's a "/" command or not.
-        broadcast({ type: "user_text", text: line });
+        broadcastTo(session, { type: "user_text", text: line });
 
         void (async () => {
           if (
             await runCommand(line, {
-              agent,
-              log: (text) => broadcast({ type: "command_output", text }),
-              refreshHistory: () => broadcast({ type: "history", messages: agent.getMessages() }),
+              agent: session.agent,
+              log: (text) => broadcastTo(session, { type: "command_output", text }),
+              refreshHistory: () => broadcastTo(session, { type: "history", messages: session.agent.getMessages() }),
             })
           )
             return;
 
-          broadcast({ type: "mode", mode: "thinking" });
+          broadcastTo(session, { type: "mode", mode: "thinking" });
           try {
-            await agent.send(line);
+            await session.agent.send(line);
           } catch (err) {
-            broadcast({ type: "error", message: (err as Error).message });
+            broadcastTo(session, { type: "error", message: (err as Error).message });
           } finally {
-            broadcast({ type: "mode", mode: "idle" });
+            broadcastTo(session, { type: "mode", mode: "idle" });
           }
         })();
       }
     });
 
-    socket.on("close", () => sockets.delete(socket));
+    socket.on("close", () => {
+      session.sockets.delete(socket);
+      debugSockets.delete(socket);
+    });
   });
 
   httpServer.listen(WEB_PORT, "127.0.0.1", () => {
+    const mcpToolNames = connectedMCP.flatMap((s) => s.defs.map((d) => `${s.name}_${d.name}`));
     console.log(`boilerplate-harness — model: ${provider.model}`);
-    console.log(`tools: ${tools.definitions().map((t) => t.name).join(", ")}`);
+    console.log(`tools: ${[...harnessConfig.tools, ...mcpToolNames].join(", ")}`);
     console.log(`listening on http://127.0.0.1:${WEB_PORT} (localhost only)`);
   });
 
   process.on("SIGINT", async () => {
-    await Promise.all(mcpClients.map((c) => c.close()));
-    await finalizeSession(provider, agent.getMessages(), memorySession);
+    await Promise.all(connectedMCP.map((c) => c.client.close()));
+    await finalizeSessions(
+      provider,
+      sessionManager.all().map((s) => s.agent.getMessages()),
+      memorySession,
+    );
     process.exit(0);
   });
 }

@@ -154,22 +154,33 @@ function recordToEntry(record: SessionRecord): Entry {
 // session-summary entry (if any) becomes the file header + the index
 // record; everything else is grouped by kind into sections of the body.
 function assembleSession(sessionStart: Date, draft: Entry[]): { summary: string; tags: string[]; body: string } {
-  let summary = "(no summary)";
-  let tags: string[] = [];
+  const summaries: string[] = [];
+  const tagSet = new Set<string>();
   const rest: Entry[] = [];
 
   for (const entry of draft) {
     if (entry.kind === MemoryKind.SessionSummary) {
-      summary = entry.content;
-      tags = entry.tags;
+      summaries.push(entry.content);
+      for (const tag of entry.tags) tagSet.add(tag);
       continue;
     }
     rest.push(entry);
   }
+  const tags = [...tagSet];
+
+  // Phase 20: a single process can now close out several concurrent
+  // conversations (one SessionSummary per SessionManager session) instead
+  // of exactly one, since finalizeSessions() saves one entry per active
+  // session before close(). Multiple summaries render as a bulleted list
+  // instead of the last one silently overwriting the others; the common
+  // single-conversation case (index.ts/tui.tsx/finalizeSession) keeps the
+  // original one-paragraph shape.
+  const summary = summaries.length > 0 ? summaries.join(" | ") : "(no summary)";
 
   let body = `# ${formatDateTime(sessionStart)}\n`;
   if (tags.length > 0) body += `tags: ${tags.join(", ")}\n`;
-  body += "\n## Summary\n\n" + summary + "\n";
+  body += "\n## Summary\n\n";
+  body += summaries.length > 1 ? summaries.map((s) => `- ${s}`).join("\n") + "\n" : summary + "\n";
 
   if (rest.length === 0) return { summary, tags, body };
 

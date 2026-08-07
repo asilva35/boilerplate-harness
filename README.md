@@ -335,6 +335,18 @@ Try it: ask the root agent to have `delegate_research` investigate a file with s
 
 Try it: `/debug on`, trigger a tool call, then `/debug show` (defaults to the latest event with a payload) to see the raw JSON that went to the provider - in the browser, open the Debug panel first and watch the same events arrive live.
 
+## Phase 20: Multi-Session and Multi-User (Web)
+
+**Key concept:** Phase 6 deliberately assumed a single global session - every browser tab shared the exact same `Agent`, like several terminals attached to the same REPL. This phase replaces that with N independent conversations, a prerequisite for almost everything that follows (per-user dashboards, chat history, roles). No equivalent in the Go original - it's a single-process CLI with no notion of concurrent sessions.
+
+- `src/session/manager.ts`: `SessionManager` holds a `sessionId → Session` map instead of the one global `Agent` `server.ts` used to build at startup. Each `Session` gets its own `Agent`/`ToolRegistry`/compactor/socket set/pending-approval slot, built on first access and reused after that - but shares the process-wide resources that are either expensive to create or genuinely stateless anyway: `Provider`, the memory `Store`, `SkillRegistry`, and already-connected MCP clients.
+- `src/mcp/register.ts` split in two: `connectMCPServers()` dials every configured server and lists its tools once at startup; `registerMCPTools()` is pure, I/O-free registration into any `ToolRegistry` - so a new session can get MCP tools without redialing a stdio subprocess (or reconnecting an http server) per conversation. `registerMCPServers()` (connect+register combined) stays as-is for `index.ts`/`tui.tsx`, which only ever need one session.
+- `server.ts`'s WebSocket handshake reads `?session=<id>` (identifies or creates a conversation) and `?user=<id>` (a separate, deliberately loose identifier - real auth doesn't land until Phase 33's tokens; a user can hold several sessions, so it isn't folded into `sessionId`). Several tabs opening the same `?session=` still share one conversation, exactly like Phase 6; different ids no longer step on each other. Debug events (Phase 19) stay global across every connected socket regardless of session - `debug.ts` is a process-wide singleton with no notion of which conversation triggered a given event.
+- Both web clients (`web-app/src/hooks/useHarnessSocket.ts` and `src/web/index.html`) generate a session id via `crypto.randomUUID()` if the URL doesn't already carry one, and write it back with `history.replaceState` - so a reconnect (the existing backoff loop) or a plain page refresh lands back on the same conversation instead of silently starting a new one.
+- `src/memory/index.ts` gains `finalizeSessions()` (plural) alongside the existing `finalizeSession()`: with N concurrent conversations, shutdown now summarizes each non-empty one into its own `SessionSummary` entry before closing the store once. That surfaced a real bug in `src/memory/session-files.ts`'s `assembleSession()`, written back when exactly one summary per process was a safe assumption: with more than one `SessionSummary` entry in the draft, the last one silently overwrote the others. Fixed to accumulate and render every summary (joined in the index, bulleted in the file body) instead of dropping all but the last.
+
+Try it: open two URLs with different `?session=` values and confirm they're independent conversations; open two tabs with the same `?session=` and confirm they still share one, like Phase 6.
+
 More phases land here as the project grows — see the commit history for the full progression.
 
 ## License

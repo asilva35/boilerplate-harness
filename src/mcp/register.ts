@@ -43,8 +43,18 @@ export async function loadConfig(path: string): Promise<Config | null> {
   return JSON.parse(raw) as Config;
 }
 
-export async function registerMCPServers(config: Config, registry: ToolRegistry): Promise<MCPClient[]> {
-  const clients: MCPClient[] = [];
+export interface ConnectedMCPServer {
+  name: string;
+  client: MCPClient;
+  defs: MCPToolDef[];
+}
+
+// Dials every configured server and lists its tools once. Split out from
+// registration (below) for Phase 20: a SessionManager needs to register the
+// same already-connected servers into a fresh ToolRegistry per session,
+// without redialing a stdio subprocess (or an http server) for each one.
+export async function connectMCPServers(config: Config): Promise<ConnectedMCPServer[]> {
+  const connected: ConnectedMCPServer[] = [];
 
   for (const server of config.servers) {
     let client: MCPClient;
@@ -64,15 +74,29 @@ export async function registerMCPServers(config: Config, registry: ToolRegistry)
       continue;
     }
 
-    for (const def of defs) {
-      registry.register(toLocalTool(server.name, client, def));
-    }
-
-    clients.push(client);
+    connected.push({ name: server.name, client, defs });
     console.log(`mcp: connected "${server.name}" (${defs.length} tools)`);
   }
 
-  return clients;
+  return connected;
+}
+
+// Pure registration, no I/O - safe to call once per SessionManager session.
+export function registerMCPTools(registry: ToolRegistry, connected: ConnectedMCPServer[]): void {
+  for (const { name, client, defs } of connected) {
+    for (const def of defs) {
+      registry.register(toLocalTool(name, client, def));
+    }
+  }
+}
+
+// Convenience for the single-session entry points (index.ts, tui.tsx):
+// connect and register in one call, same signature/behavior as before Phase
+// 20 split this in two.
+export async function registerMCPServers(config: Config, registry: ToolRegistry): Promise<MCPClient[]> {
+  const connected = await connectMCPServers(config);
+  registerMCPTools(registry, connected);
+  return connected.map((c) => c.client);
 }
 
 function dial(s: ServerConfig): Promise<MCPClient> {

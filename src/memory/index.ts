@@ -50,3 +50,26 @@ export async function finalizeSession(provider: Provider, messages: Message[], s
     console.error(`memory: failed to save session: ${(err as Error).message}`);
   }
 }
+
+// Phase 20 variant for server.ts: with a SessionManager, a single process
+// now holds N independent conversations instead of one. Summarizes each
+// one (skipping empties) into its own SessionSummary entry in the shared
+// store, then closes the store once. Each summary is best-effort on its
+// own - one conversation failing to summarize shouldn't lose the others -
+// but close() always runs so whatever did succeed gets flushed.
+export async function finalizeSessions(provider: Provider, allMessages: Message[][], session: MemorySession): Promise<void> {
+  for (const messages of allMessages) {
+    if (messages.length === 0) continue;
+    try {
+      const { summary, tags } = await summarizeSession(provider, messages);
+      await session.store.save({ time: new Date(), kind: MemoryKind.SessionSummary, content: summary, tags });
+    } catch (err) {
+      console.error(`memory: failed to summarize a session: ${(err as Error).message}`);
+    }
+  }
+  try {
+    await session.close();
+  } catch (err) {
+    console.error(`memory: failed to close store: ${(err as Error).message}`);
+  }
+}

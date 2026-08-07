@@ -161,6 +161,23 @@ test("entries without a session-summary use a placeholder summary and group fact
   });
 });
 
+test("multiple session-summary entries (Phase 20: several conversations closing in one process) all survive, not just the last", async () => {
+  await withTempDir(async (dir) => {
+    const store = await SessionFiles.open(dir);
+    await store.save({ time: new Date(), kind: MemoryKind.SessionSummary, content: "sess-A: discussed auth", tags: ["auth"] });
+    await store.save({ time: new Date(), kind: MemoryKind.SessionSummary, content: "sess-B: discussed billing", tags: ["billing"] });
+    await store.close();
+
+    const index = JSON.parse(await readFile(path.join(dir, "index.json"), "utf-8"));
+    assert.match(index.sessions[0].summary, /sess-A: discussed auth/);
+    assert.match(index.sessions[0].summary, /sess-B: discussed billing/);
+    assert.deepEqual(index.sessions[0].tags.sort(), ["auth", "billing"]);
+
+    const body = await readFile(path.join(dir, index.sessions[0].path), "utf-8");
+    assert.match(body, /## Summary\n\n- sess-A: discussed auth\n- sess-B: discussed billing/);
+  });
+});
+
 test("a malformed index.json is a real error, not silently swallowed", async () => {
   await withTempDir(async (dir) => {
     await writeFile(path.join(dir, "index.json"), "not json", "utf-8");

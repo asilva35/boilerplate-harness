@@ -79,9 +79,22 @@ export function useHarnessSocket() {
   useEffect(() => {
     let cancelled = false;
 
+    // Phase 20: identifies this tab's conversation to the server. Read
+    // from the URL if a link already carried one (e.g. shared/bookmarked);
+    // otherwise mint one and write it back via replaceState so a
+    // reconnect (the backoff loop below) or a plain page refresh lands on
+    // the same session instead of silently starting a new one each time.
+    const params = new URLSearchParams(location.search);
+    let sessionId = params.get("session");
+    if (!sessionId) {
+      sessionId = crypto.randomUUID();
+      params.set("session", sessionId);
+      history.replaceState(null, "", `${location.pathname}?${params}`);
+    }
+
     function connect() {
       const proto = location.protocol === "https:" ? "wss://" : "ws://";
-      const socket = new WebSocket(proto + location.host);
+      const socket = new WebSocket(`${proto}${location.host}/?session=${encodeURIComponent(sessionId!)}`);
       socketRef.current = socket;
 
       socket.addEventListener("open", () => {
