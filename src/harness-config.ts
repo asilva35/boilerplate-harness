@@ -80,17 +80,21 @@ export function resolveRoleTools(config: HarnessConfig, role: string): string[] 
   return tools;
 }
 
-function load(): HarnessConfig {
+// Phase 22: generalized from the original load() (which only ever read
+// "harness.config.json") to take any path, so a ProfileRegistry can load
+// "harness.<profile>.config.json" files the same way without duplicating
+// this parse/validate logic.
+export function loadHarnessConfig(path: string): HarnessConfig {
   let raw: string;
   try {
-    raw = readFileSync("harness.config.json", "utf-8");
+    raw = readFileSync(path, "utf-8");
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === "ENOENT") {
       throw new ConfigError(
-        'Missing harness.config.json in the current directory. This file holds per-deployment ' +
-          'settings (system prompt, tools, compaction) and is expected to exist — see ' +
-          "harness.config.json in the repo root for the reference shape, or run this project's " +
-          "own copy of it if you're inside a scaffolded project.",
+        `Missing ${path} in the current directory. This file holds per-deployment settings ` +
+          "(system prompt, tools, compaction) and is expected to exist — see harness.config.json " +
+          "in the repo root for the reference shape, or run this project's own copy of it if " +
+          "you're inside a scaffolded project.",
       );
     }
     throw err;
@@ -100,12 +104,12 @@ function load(): HarnessConfig {
   try {
     parsed = JSON.parse(raw);
   } catch (err) {
-    throw new ConfigError(`harness.config.json is not valid JSON: ${(err as Error).message}`);
+    throw new ConfigError(`${path} is not valid JSON: ${(err as Error).message}`);
   }
 
   const result = harnessConfigSchema.safeParse(parsed);
   if (!result.success) {
-    throw new ConfigError(`harness.config.json is invalid: ${result.error.message}`);
+    throw new ConfigError(`${path} is invalid: ${result.error.message}`);
   }
   validateRoles(result.data);
   return result.data;
@@ -113,5 +117,29 @@ function load(): HarnessConfig {
 
 // Computed once at import time, same pattern config.ts already uses for
 // env vars — every entry point imports the same resolved singleton instead
-// of re-reading and re-parsing the file per call site.
-export const harnessConfig = load();
+// of re-reading and re-parsing the file per call site. Also doubles as the
+// "default" profile's config for server.ts's ProfileRegistry below, so the
+// file is never read/parsed twice.
+export const harnessConfig = loadHarnessConfig("harness.config.json");
+
+// Phase 22: a session can now resolve its own effective harness.config.json
+// instead of every session in the process sharing the one global
+// `harnessConfig` above - different system prompt, different tool-pack.
+// "default" always maps to harness.config.json (the file already loaded
+// into `harnessConfig`, reused instead of re-read); any other profile name
+// `p` maps to harness.<p>.config.json in the same directory. Configs are
+// loaded lazily (only profiles a session actually asks for get read off
+// disk) and cached - re-parsing and re-validating on every session creation
+// would be pure waste, the file doesn't change while the process runs.
+export class ProfileRegistry {
+  private readonly cache = new Map<string, HarnessConfig>([["default", harnessConfig]]);
+
+  get(name: string): HarnessConfig {
+    const cached = this.cache.get(name);
+    if (cached) return cached;
+
+    const config = loadHarnessConfig(`harness.${name}.config.json`);
+    this.cache.set(name, config);
+    return config;
+  }
+}

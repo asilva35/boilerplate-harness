@@ -22,11 +22,13 @@ import { ToolRegistry } from "../tools/registry.js";
 export interface Session {
   readonly id: string;
   readonly userId: string;
-  // Phase 21: fixed at creation - the ToolRegistry below is one shared
-  // object for every socket attached to this session, so there's no way
-  // to give two sockets on the same session different tool visibility.
-  // See the mismatch check in get() below.
+  // Phase 21/22: both fixed at creation - the ToolRegistry/Agent below are
+  // one shared object for every socket attached to this session, so
+  // there's no way to give two sockets on the same session different
+  // tools or a different system prompt. See the mismatch check in get()
+  // below.
   readonly role: string;
+  readonly profile: string;
   // Not readonly: create() below has to construct this after `session`
   // itself exists, since the Agent's confirm callback closes over `session`
   // to set pendingApproval.
@@ -36,12 +38,27 @@ export interface Session {
   pendingApproval: { resolve: (approved: boolean) => void } | null;
 }
 
+// Structural, not the concrete ProfileRegistry class - lets tests supply an
+// in-memory fake instead of reading real harness.<profile>.config.json
+// files off disk.
+export interface ProfileSource {
+  get(name: string): HarnessConfig;
+}
+
 export interface SessionManagerOptions {
-  harnessConfig: HarnessConfig;
+  // Phase 22: replaces the single global HarnessConfig every session used
+  // to share - each session resolves its own effective config (system
+  // prompt, tool-pack, compaction, roles) from this by profile name.
+  profiles: ProfileSource;
   provider: Provider;
   memoryStore: MemoryStore;
   skillRegistry: SkillRegistry;
-  systemPrompt: string;
+  // Recent-sessions summary from Phase 16 - independent of profile (it's
+  // about what happened in past conversations, not which deployment
+  // config is active), so it's appended to whichever profile's own
+  // systemPrompt a session resolves, rather than baked into one fixed
+  // string the way it was pre-Phase-22.
+  memoryPreamble: string;
   connectedMCP: ConnectedMCPServer[];
 }
 
@@ -54,14 +71,15 @@ export class SessionManager {
   constructor(private readonly opts: SessionManagerOptions) {}
 
   // Returns the existing session for `id`, or builds a new one. Several
-  // sockets calling get() with the same id share the same Session object
-  // (and therefore the same Agent/conversation and tool set) - same
-  // behavior the single global Agent gave every tab for free before Phase
-  // 20. A reconnect claiming a different role than the session was
-  // created with is rejected rather than silently attached - the
-  // ToolRegistry is a single shared object per session, so there's no
-  // such thing as "join with a different role" once it's already built.
-  get(id: string, userId: string, role: string): Session {
+  // sockets calling get() with the same id/role/profile share the same
+  // Session object (and therefore the same Agent/conversation and tool
+  // set) - same behavior the single global Agent gave every tab for free
+  // before Phase 20. A reconnect claiming a different role or profile
+  // than the session was created with is rejected rather than silently
+  // attached - the ToolRegistry/Agent are single shared objects per
+  // session, so there's no such thing as "join with different settings"
+  // once they're already built.
+  get(id: string, userId: string, role: string, profile: string): Session {
     const existing = this.sessions.get(id);
     if (existing) {
       if (existing.role !== role) {
@@ -70,10 +88,16 @@ export class SessionManager {
             "the same role, or use a different session id.",
         );
       }
+      if (existing.profile !== profile) {
+        throw new ConfigError(
+          `Session "${id}" was created with profile "${existing.profile}", got "${profile}" - ` +
+            "reconnect with the same profile, or use a different session id.",
+        );
+      }
       return existing;
     }
 
-    const session = this.create(id, userId, role);
+    const session = this.create(id, userId, role, profile);
     this.sessions.set(id, session);
     return session;
   }
@@ -82,14 +106,16 @@ export class SessionManager {
     return [...this.sessions.values()];
   }
 
-  private create(id: string, userId: string, role: string): Session {
-    const toolNames = resolveRoleTools(this.opts.harnessConfig, role);
+  private create(id: string, userId: string, role: string, profile: string): Session {
+    const config = this.opts.profiles.get(profile);
+    const toolNames = resolveRoleTools(config, role);
     const tools = new ToolRegistry();
     registerCatalogTools(tools, toolNames, this.opts.provider, this.opts.memoryStore, this.opts.skillRegistry);
-    // Not role-gated: MCP servers are a separate opt-in (mcp.json), not
-    // part of harnessConfig.tools/roles, and every MCP tool already
-    // requires approval unconditionally regardless of role (Phase 5).
-    // Gating individual MCP tools per role is real scope, deferred.
+    // Not role- or profile-gated: MCP servers are a separate opt-in
+    // (mcp.json), not part of any harness.config.json's tools/roles, and
+    // every MCP tool already requires approval unconditionally regardless
+    // of role (Phase 5). Gating them per role/profile is real scope,
+    // deferred.
     registerMCPTools(tools, this.opts.connectedMCP);
 
     const sockets = new Set<WebSocket>();
@@ -106,6 +132,7 @@ export class SessionManager {
       id,
       userId,
       role,
+      profile,
       tools,
       sockets,
       pendingApproval: null,
@@ -115,8 +142,8 @@ export class SessionManager {
     session.agent = new Agent({
       provider: this.opts.provider,
       tools,
-      systemPrompt: this.opts.systemPrompt,
-      compactor: buildCompactor(this.opts.harnessConfig.compaction, this.opts.provider),
+      systemPrompt: config.systemPrompt + this.opts.memoryPreamble,
+      compactor: buildCompactor(config.compaction, this.opts.provider),
       onToolCall: (name, rawInput) => broadcast({ type: "tool_call", name, input: rawInput }),
       onAssistantText: (text) => broadcast({ type: "assistant_text", text }),
       onTextDelta: (chunk) => broadcast({ type: "text_delta", text: chunk }),

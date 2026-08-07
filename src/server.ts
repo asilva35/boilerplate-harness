@@ -32,7 +32,7 @@ import type { Agent } from "./agent.js";
 import { runCommand } from "./commands.js";
 import { setSink } from "./debug.js";
 import { reportFatal } from "./errors.js";
-import { harnessConfig } from "./harness-config.js";
+import { harnessConfig, ProfileRegistry } from "./harness-config.js";
 import { createMemoryStore, finalizeSessions } from "./memory/index.js";
 import { connectMCPServers, loadConfig } from "./mcp/register.js";
 import { createProvider } from "./provider/index.js";
@@ -106,18 +106,21 @@ async function main() {
   const provider = createProvider();
 
   const memorySession = await createMemoryStore();
-  const systemPrompt = harnessConfig.systemPrompt + (await memorySession.store.preamble());
+  // Phase 22: no longer baked into one fixed systemPrompt - each session
+  // resolves its own profile's systemPrompt and appends this same preamble
+  // (recent-sessions memory doesn't vary by profile).
+  const memoryPreamble = await memorySession.store.preamble();
   const skillRegistry = await SkillRegistry.load();
 
   const mcpConfig = await loadConfig("mcp.json");
   const connectedMCP = mcpConfig ? await connectMCPServers(mcpConfig) : [];
 
   const sessionManager = new SessionManager({
-    harnessConfig,
+    profiles: new ProfileRegistry(),
     provider,
     memoryStore: memorySession.store,
     skillRegistry,
-    systemPrompt,
+    memoryPreamble,
     connectedMCP,
   });
 
@@ -169,14 +172,18 @@ async function main() {
     // gets exactly the pre-Phase-21 behavior (the full harnessConfig.tools
     // list).
     const role = url.searchParams.get("role") ?? "admin";
+    // Phase 22: ?profile=<name>, defaulting to "default" (harness.config.json
+    // as-is) - same opt-in philosophy as roles: a caller that never heard
+    // of profiles gets exactly the pre-Phase-22 behavior.
+    const profile = url.searchParams.get("profile") ?? "default";
 
     let session: Session;
     try {
-      session = sessionManager.get(sessionId, userId, role);
+      session = sessionManager.get(sessionId, userId, role, profile);
     } catch (err) {
-      // Unknown role, or a role mismatch against an already-open session -
-      // a caller error, not a server bug: tell just this socket and close,
-      // don't take down every other session.
+      // Unknown role/profile, or a role/profile mismatch against an
+      // already-open session - a caller error, not a server bug: tell
+      // just this socket and close, don't take down every other session.
       socket.send(JSON.stringify({ type: "error", message: (err as Error).message } satisfies ServerMessage));
       socket.close();
       return;

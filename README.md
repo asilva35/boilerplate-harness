@@ -358,6 +358,18 @@ Try it: open two URLs with different `?session=` values and confirm they're inde
 
 Try it: connect with `?role=client` and confirm the model has no `bash` tool available at all (not merely one that asks for approval) - it isn't in `tools.definitions()`, so the model can't even attempt to call it.
 
+## Phase 22: Profile Isolation
+
+**Key concept:** every session used to share the one `harnessConfig` singleton loaded at process startup - same system prompt, same tool-pack, same compaction settings, no matter which session it was. This phase lets a session resolve its own effective `harness.config.json` instead, relevant now that real multi-session (Phase 20) exists. No equivalent in the Go original.
+
+- `harness-config.ts`: `load()` generalized into `loadHarnessConfig(path)`, taking any file path instead of always `"harness.config.json"` - the parse/validate/role-check logic doesn't change, only what file it reads. The `harnessConfig` singleton (used by `index.ts`/`tui.tsx`, which only ever need one config) is unchanged, just now expressed as `loadHarnessConfig("harness.config.json")`.
+- `ProfileRegistry`: resolves a **profile name** to a `HarnessConfig`, lazily and cached - `"default"` reuses the `harnessConfig` singleton (no double read), any other name `p` loads `harness.<p>.config.json` from the working directory the first time it's asked for and returns the same object on every later call. A profile file that doesn't exist throws the same `ConfigError` `loadHarnessConfig` would.
+- `src/session/manager.ts`: `SessionManager.get()`/`create()` now also take a `profile` alongside `sessionId`/`role`. A session resolves its `ToolRegistry` (role-filtered, Phase 21) and `Agent`'s `systemPrompt`/compactor from that profile's own config - the Phase 16 memory preamble (recent-session summaries) is appended on top regardless of profile, since it's about past conversations, not which deployment config is active. `Session.profile` is fixed at creation for the same reason `role` is (Phase 21): the `Agent`/`ToolRegistry` are one shared object per session. A reconnect claiming a different profile than the session was created with is rejected, same as a role mismatch. `SessionManagerOptions.profiles` is typed as the structural `ProfileSource` interface (not the concrete `ProfileRegistry` class), so tests can supply an in-memory fake instead of reading real config files off disk.
+- `server.ts`'s WebSocket handshake reads `?profile=<name>`, defaulting to `"default"` - same opt-in philosophy as `?role=`.
+- `harness.readonly.config.json`: a second example profile shipped in the repo - no `bash`/`write_file` in its tool-pack at all (not merely role-restricted within the default profile) and its own system prompt explaining it can't write or execute anything, so the practical test below works against the repo as committed.
+
+Try it: open two concurrent sessions, one with no `?profile=` (or `?profile=default`) and one with `?profile=readonly` - confirm the first has `bash` and the second doesn't, and that neither's tool-pack or system prompt leaks into the other.
+
 More phases land here as the project grows — see the commit history for the full progression.
 
 ## License
