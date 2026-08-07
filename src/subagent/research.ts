@@ -69,16 +69,37 @@ export class ResearchSubagent implements Subagent {
   constructor(
     private readonly provider: Provider,
     private readonly tools: ToolRegistry,
+    // Phase 26: optional per-subagent model override (from tools.json's
+    // "subagentModels"), e.g. running research on a cheaper/faster model
+    // than the root agent. Undefined means "inherit whatever model the
+    // shared Provider is already set to."
+    private readonly model?: string,
   ) {}
 
   async run(task: string): Promise<SubagentResult> {
-    const agent = new Agent({
-      provider: this.provider,
-      tools: this.tools,
-      systemPrompt: SYSTEM_PROMPT,
-      maxTurns: 10,
-    });
-    const text = await agent.send(task);
-    return parseRiskAndNext(text);
+    // this.provider is the SAME instance the root Agent uses (see
+    // tools/catalog.ts's registerSubagents) - Provider.model is a mutable
+    // field read at send() time (Phase 25), not a constructor argument, so
+    // switching it here really does affect a shared object. Restoring it
+    // in `finally` (even if agent.send() throws, e.g. "max turns reached")
+    // is what keeps this safe: without it, one delegate_research call
+    // would permanently change the root agent's model for the rest of the
+    // session, since sends within a session already run sequentially
+    // (Agent.loop awaits each tool call before the next), never
+    // concurrently against this provider.
+    const originalModel = this.provider.model;
+    if (this.model) this.provider.setModel(this.model);
+    try {
+      const agent = new Agent({
+        provider: this.provider,
+        tools: this.tools,
+        systemPrompt: SYSTEM_PROMPT,
+        maxTurns: 10,
+      });
+      const text = await agent.send(task);
+      return parseRiskAndNext(text);
+    } finally {
+      if (this.model) this.provider.setModel(originalModel);
+    }
   }
 }

@@ -24,6 +24,7 @@ function config(overrides: Partial<HarnessConfig> = {}): HarnessConfig {
     compaction: COMPACTION,
     roles: {},
     subagents: {},
+    subagentModels: {},
     ...overrides,
   };
 }
@@ -105,7 +106,7 @@ test("loadToolsSection: a missing file is a ConfigError naming the exact path", 
   });
 });
 
-test("loadToolsSection: a valid file parses tools and applies Zod defaults for roles/subagents", async () => {
+test("loadToolsSection: a valid file parses tools and applies Zod defaults for roles/subagents/subagentModels", async () => {
   await withTempDir(async (dir) => {
     const file = path.join(dir, "good.json");
     await writeFile(file, JSON.stringify({ tools: ["read_file"] }), "utf-8");
@@ -113,6 +114,20 @@ test("loadToolsSection: a valid file parses tools and applies Zod defaults for r
     assert.deepEqual(loaded.tools, ["read_file"]);
     assert.deepEqual(loaded.roles, {});
     assert.deepEqual(loaded.subagents, {});
+    assert.deepEqual(loaded.subagentModels, {});
+  });
+});
+
+test("loadToolsSection: parses a configured subagentModels map", async () => {
+  await withTempDir(async (dir) => {
+    const file = path.join(dir, "good.json");
+    await writeFile(
+      file,
+      JSON.stringify({ tools: ["read_file"], subagentModels: { research: "cheap-model" } }),
+      "utf-8",
+    );
+    const loaded = loadToolsSection(file);
+    assert.deepEqual(loaded.subagentModels, { research: "cheap-model" });
   });
 });
 

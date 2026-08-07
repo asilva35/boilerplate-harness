@@ -94,9 +94,13 @@ function registerSubagents(
   provider: Provider,
   subagentTools: Record<string, string[]>,
   connectedMCP: ConnectedMCPServer[],
+  // Phase 26: optional model override per subagent name (tools.json's
+  // "subagentModels"), defaulting to {} so existing call sites that don't
+  // care - most unit tests - don't need to change.
+  subagentModels: Record<string, string> = {},
 ): void {
   const researchTools = buildToolPack(subagentTools.research ?? DEFAULT_SUBAGENT_TOOLS.research, connectedMCP);
-  registry.register(new ResearchSubagent(provider, researchTools));
+  registry.register(new ResearchSubagent(provider, researchTools, subagentModels.research));
 }
 
 // Phase 25: re-registers delegate_<name> tools already present in an
@@ -122,9 +126,10 @@ export function refreshSubagentTools(
   subagentTools: Record<string, string[]>,
   skillRegistry: SkillRegistry,
   connectedMCP: ConnectedMCPServer[],
+  subagentModels: Record<string, string> = {},
 ): void {
   const subagents = new SubagentRegistry();
-  registerSubagents(subagents, provider, subagentTools, connectedMCP);
+  registerSubagents(subagents, provider, subagentTools, connectedMCP, subagentModels);
   for (const subagent of subagents.all()) {
     const toolName = `delegate_${subagent.name}`;
     if (registry.get(toolName)) {
@@ -152,9 +157,11 @@ export function registerCatalogTools(
   // MCP servers are already connected.
   subagentTools: Record<string, string[]> = {},
   connectedMCP: ConnectedMCPServer[] = [],
+  // Phase 26: same optional/default treatment, from harnessConfig.subagentModels.
+  subagentModels: Record<string, string> = {},
 ): void {
   const subagents = new SubagentRegistry();
-  registerSubagents(subagents, provider, subagentTools, connectedMCP);
+  registerSubagents(subagents, provider, subagentTools, connectedMCP, subagentModels);
   const delegateTools = new Map<string, Tool>(
     subagents.all().map((s) => [`delegate_${s.name}`, delegateTool(s, provider, skillRegistry)]),
   );

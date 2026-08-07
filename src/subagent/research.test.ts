@@ -108,6 +108,47 @@ test("a reply with no RISK/NEXT lines at all (model didn't follow the format) re
   assert.equal(result.risk, undefined);
 });
 
+test("Phase 26: with no model override, runs on whatever model the shared provider already has", async () => {
+  const provider = new MockProvider([{ content: [{ type: "text", text: "found it" }], stopReason: "end_turn" }]);
+  provider.setModel("root-model");
+  const subagent = new ResearchSubagent(provider, readOnlyTools());
+
+  await subagent.run("where is the config file?");
+
+  assert.equal(provider.calls[0].model, "root-model");
+  assert.equal(provider.model, "root-model");
+});
+
+test("Phase 26: with a model override, the send() call actually uses it", async () => {
+  const provider = new MockProvider([{ content: [{ type: "text", text: "found it" }], stopReason: "end_turn" }]);
+  provider.setModel("root-model");
+  const subagent = new ResearchSubagent(provider, readOnlyTools(), "cheap-model");
+
+  await subagent.run("where is the config file?");
+
+  assert.equal(provider.calls[0].model, "cheap-model");
+});
+
+test("Phase 26: restores the provider's original model after run(), since it's shared with the root agent", async () => {
+  const provider = new MockProvider([{ content: [{ type: "text", text: "found it" }], stopReason: "end_turn" }]);
+  provider.setModel("root-model");
+  const subagent = new ResearchSubagent(provider, readOnlyTools(), "cheap-model");
+
+  await subagent.run("where is the config file?");
+
+  assert.equal(provider.model, "root-model");
+});
+
+test("Phase 26: restores the original model even if the subagent's run throws", async () => {
+  const provider = new MockProvider([]); // no scripted response - agent.send() throws immediately
+  provider.setModel("root-model");
+  const subagent = new ResearchSubagent(provider, readOnlyTools(), "cheap-model");
+
+  await assert.rejects(() => subagent.run("where is the config file?"));
+
+  assert.equal(provider.model, "root-model");
+});
+
 test("each run starts a fresh agent - no history carries over between calls", async () => {
   const provider = new MockProvider([
     { content: [{ type: "text", text: "first answer" }], stopReason: "end_turn" },

@@ -53,7 +53,7 @@ Three separate files, on purpose:
 
 - **`.env`** — secrets: API keys, which provider/model to use. Never committed.
 - **`harness.config.json`** — per-deployment behavior: system prompt, compaction tuning. **Committed**, like `vite.config.ts` — this is what you edit to turn this boilerplate into a different harness, instead of forking code.
-- **`tools.json`** — what the harness can reach: local tools, roles (Phase 21), per-subagent tool packs (Phase 23). **Committed**, analogous to `mcp.json` but for this project's own tools/subagents rather than external MCP servers (split out from `harness.config.json` in Phase 24, so registering/restricting a tool is a one-line config change here rather than editing deployment behavior).
+- **`tools.json`** — what the harness can reach: local tools, roles (Phase 21), per-subagent tool packs and model overrides (Phases 23/26). **Committed**, analogous to `mcp.json` but for this project's own tools/subagents rather than external MCP servers (split out from `harness.config.json` in Phase 24, so registering/restricting a tool is a one-line config change here rather than editing deployment behavior).
 
 ```jsonc
 // harness.config.json
@@ -68,11 +68,12 @@ Three separate files, on purpose:
 {
   "tools": ["read_file", "write_file", "bash"],
   "roles": { "client": ["read_file"] },
-  "subagents": { "research": ["read_file"] }
+  "subagents": { "research": ["read_file"] },
+  "subagentModels": { "research": "anthropic/claude-haiku-4.5" }
 }
 ```
 
-`tools` names must match a key in `src/tools/catalog.ts`'s `STATIC_CATALOG` (or `delegate_<subagent>`/`remember`/`recall`); an unknown name fails fast with a clear error instead of silently registering nothing. `compaction`/`roles`/`subagents` are all optional (defaults shown above / empty); `"strategy": "none"` disables compaction entirely.
+`tools` names must match a key in `src/tools/catalog.ts`'s `STATIC_CATALOG` (or `delegate_<subagent>`/`remember`/`recall`); an unknown name fails fast with a clear error instead of silently registering nothing. `compaction`/`roles`/`subagents`/`subagentModels` are all optional (defaults shown above / empty); `"strategy": "none"` disables compaction entirely. `subagentModels` (Phase 26) lets a subagent run on a different model than the root agent's - a key with no entry just inherits whatever model the session's provider is already using.
 
 Multiple deployment **profiles** (Phase 22) can coexist: `harness.readonly.config.json` + `tools.readonly.json` ship as a second example (no `bash`/`write_file` at all) - see that phase's section below for how a session picks one.
 
@@ -110,7 +111,7 @@ Its tools show up alongside the local ones, under `"<server>_<tool>"`. By defaul
 
 ```
 harness.config.json        Per-deployment behavior: system prompt, compaction (committed)
-tools.json                  What the harness can reach: tools, roles, subagents (committed)
+tools.json                  What the harness can reach: tools, roles, subagents, subagent models (committed)
 scripts/
 └── scaffold.ts               Copies the core into a new project with fresh harness.config.json + tools.json
 src/
@@ -427,6 +428,20 @@ A real architectural question this phase forced, resolved with Eloy before writi
 - `createProvider()`'s existing `ConfigError` (unknown provider name, missing API key) does double duty for `/provider`: it fails at switch time with a clear message, instead of Go's looser "switch anyway, warn, fail on the next call."
 
 Try it: run a couple of turns, then `/tokens` to see real input/output/cost; `/model claude-opus-4-6` and confirm the next call uses it; `/provider openrouter <model>` (or `anthropic`, if that key has credit) and confirm both the root agent and a delegated subagent call go through the new backend.
+
+## Phase 26: Model Routing per Subagent
+
+**Key concept:** not every task needs the root agent's model - `research` (Phase 14) is a read-only investigation loop that can run on something cheaper/faster, configured per subagent rather than hardcoded. No Go module to migrate: this extends Phase 25's per-session `Provider`, which Go never had either.
+
+Another guide-vs-reality note, same kind as Phases 23/24: the guide's own text says to document this "in `harness.config.json` (Phase 8)" - but since Phase 24 split subagent config (`subagents`, per-subagent tool packs) out into `tools.json`, putting the model override in a different file would split one subagent's configuration (which tools it gets, which model it runs on) across two places. Asked Eloy before writing code: keep it in `tools.json`, next to `subagents` - he agreed.
+
+- `harness-config.ts`: `tools.json` gains `subagentModels`, an optional `Record<string, string>` (default `{}`) mapping subagent name → model id. Not validated at config-load time, same reasoning as `subagents`: a value here is meaningless without knowing which subagents exist, and that's a runtime concern, not something to enforce while parsing JSON.
+- `subagent/research.ts`: `ResearchSubagent` takes an optional third constructor argument, `model?: string`. The tricky part isn't reading it - it's that `this.provider` is the **same instance** the root `Agent` uses (Phase 25 made `Provider.model` a mutable field read at `send()` time, not a constructor argument), so setting it for the subagent's call really does affect a shared object. `run()` snapshots the provider's current model, switches to the override for its `agent.send()` call, and restores the original in a `finally` - so even a subagent run that throws (e.g. "max turns reached") can't leave the shared provider permanently pointed at the wrong model. Safe because tool calls within a session already run sequentially (`Agent.loop` awaits each one before the next), never concurrently against the same provider.
+- `tools/catalog.ts`: `registerSubagents()`, `registerCatalogTools()`, and `refreshSubagentTools()` all gain an optional `subagentModels` parameter (default `{}`), threaded down to `new ResearchSubagent(provider, tools, subagentModels.research)`. `refreshSubagentTools()` (Phase 25's `/provider` support) passes it through too, so a model override survives a mid-session backend swap.
+- `provider/mock.ts`: `MockProvider.calls` now also records `model` (the provider's model *at the moment of that call*, not read live afterward) - needed to assert which model a given `send()` actually used, especially with a subagent temporarily switching it mid-session.
+- Committed: `tools.json` sets `"subagentModels": { "research": "anthropic/claude-haiku-4.5" }` as a working example against the default OpenRouter deployment.
+
+Try it: with the committed `tools.json`, ask the root agent a question that triggers `delegate_research`, then `/debug` - the subagent's `provider.send` events show `model=anthropic/claude-haiku-4.5` while the root agent's own calls before and after it still show `anthropic/claude-sonnet-4.6`, confirming both that the override took effect and that it didn't leak into the rest of the session.
 
 More phases land here as the project grows — see the commit history for the full progression.
 

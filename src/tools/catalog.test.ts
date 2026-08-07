@@ -148,6 +148,60 @@ test("refreshSubagentTools: rebuilds the tool pack from the given subagentTools 
   assert.deepEqual(subagentToolNames, ["filesystem_read_text_file"]);
 });
 
+test("Phase 26: registerCatalogTools threads a per-subagent model override through to the subagent's send() call", async () => {
+  const registry = new ToolRegistry();
+  const provider = new MockProvider([{ content: [{ type: "text", text: "ok" }], stopReason: "end_turn" }]);
+  provider.setModel("root-model");
+  const memoryStore = new NoMemory();
+  const skillRegistry = new SkillRegistry([]);
+
+  registerCatalogTools(
+    registry,
+    ["delegate_research"],
+    provider,
+    memoryStore,
+    skillRegistry,
+    {},
+    [],
+    { research: "cheap-model" },
+  );
+
+  await registry.execute("delegate_research", JSON.stringify({ task: "look something up" }));
+
+  assert.equal(provider.calls[0].model, "cheap-model");
+  assert.equal(provider.model, "root-model"); // restored after the subagent's run() returns
+});
+
+test("Phase 26: with no subagentModels config, research inherits whatever model the provider already has", async () => {
+  const registry = new ToolRegistry();
+  const provider = new MockProvider([{ content: [{ type: "text", text: "ok" }], stopReason: "end_turn" }]);
+  provider.setModel("root-model");
+  const memoryStore = new NoMemory();
+  const skillRegistry = new SkillRegistry([]);
+
+  registerCatalogTools(registry, ["delegate_research"], provider, memoryStore, skillRegistry);
+
+  await registry.execute("delegate_research", JSON.stringify({ task: "look something up" }));
+
+  assert.equal(provider.calls[0].model, "root-model");
+});
+
+test("refreshSubagentTools: threads a per-subagent model override through too, on the new provider", async () => {
+  const registry = new ToolRegistry();
+  const oldProvider = new MockProvider([]);
+  const newProvider = new MockProvider([{ content: [{ type: "text", text: "ok" }], stopReason: "end_turn" }]);
+  newProvider.setModel("root-model");
+  const memoryStore = new NoMemory();
+  const skillRegistry = new SkillRegistry([]);
+
+  registerCatalogTools(registry, ["delegate_research"], oldProvider, memoryStore, skillRegistry);
+  refreshSubagentTools(registry, newProvider, {}, skillRegistry, [], { research: "cheap-model" });
+
+  await registry.execute("delegate_research", JSON.stringify({ task: "look something up" }));
+
+  assert.equal(newProvider.calls[0].model, "cheap-model");
+});
+
 test("refreshSubagentTools: never adds a delegate_<name> tool that wasn't already registered - it refreshes, doesn't expand scope", () => {
   const registry = new ToolRegistry(); // delegate_research deliberately never registered
   const provider = new MockProvider([]);

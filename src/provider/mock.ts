@@ -31,7 +31,11 @@ export class MockProvider implements Provider {
   private total: Usage = { inputTokens: 0, outputTokens: 0, cachedTokens: 0 };
 
   // Recorded for assertions - what the Agent actually sent on each call.
-  readonly calls: { messages: Message[]; systemPrompt: string; tools: ToolDef[] }[] = [];
+  // Phase 26: `model` snapshots this.model at call time (not read live off
+  // the provider afterward) so a test can tell which model a given call
+  // actually used, even if something (a subagent, "/model") changes it
+  // again before the assertion runs.
+  readonly calls: { messages: Message[]; systemPrompt: string; tools: ToolDef[]; model: string }[] = [];
 
   constructor(responses: MockResponse[]) {
     this.responses = responses;
@@ -59,7 +63,7 @@ export class MockProvider implements Provider {
     // between turns, so recording the reference as-is would make every
     // past call's `messages` reflect the final state instead of what was
     // actually sent at the time.
-    this.calls.push({ messages: [...messages], systemPrompt, tools });
+    this.calls.push({ messages: [...messages], systemPrompt, tools, model: this.model });
     const response = this.responses[this.callCount];
     if (!response) {
       throw new Error(`MockProvider: no scripted response for call #${this.callCount + 1}`);

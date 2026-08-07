@@ -133,6 +133,7 @@ export class SessionManager {
       this.opts.skillRegistry,
       config.subagents, // Phase 23: per-subagent tool packs, from this session's own profile
       this.opts.connectedMCP,
+      config.subagentModels, // Phase 26: per-subagent model override, from this session's own profile
     );
     // Not role- or profile-gated: MCP servers are a separate opt-in
     // (mcp.json), not part of any harness.config.json's tools/roles, and
@@ -163,7 +164,14 @@ export class SessionManager {
       switchProvider: (name: string, model?: string): Provider => {
         const newProvider = this.opts.createProvider(name, model);
         session.agent.provider = newProvider;
-        refreshSubagentTools(tools, newProvider, config.subagents, this.opts.skillRegistry, this.opts.connectedMCP);
+        refreshSubagentTools(
+          tools,
+          newProvider,
+          config.subagents,
+          this.opts.skillRegistry,
+          this.opts.connectedMCP,
+          config.subagentModels,
+        );
         return newProvider;
       },
     };

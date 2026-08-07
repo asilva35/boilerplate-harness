@@ -51,10 +51,20 @@ const harnessConfigSchema = z.object({
 // config-load time (that happens later, async, in each entry point's
 // main()). Resolved and validated at the point a subagent is actually
 // built - see tools/catalog.ts's buildToolPack().
+// Phase 26: `subagentModels`, an optional model override per subagent name
+// (e.g. run `research` on a cheaper/faster model than the root agent) -
+// kept alongside `subagents` rather than in harness.<profile>.config.json
+// (which the migration guide's own text points to) for the same cohesion
+// reason Phase 24 split this file out in the first place: everything about
+// a given subagent's configuration - which tools it gets, which model it
+// runs on - lives in one place instead of two. A subagent with no entry
+// here just inherits whatever model the session's Provider is already
+// using, same as before this phase existed.
 const toolsConfigSchema = z.object({
   tools: z.array(z.string()),
   roles: z.record(z.string(), z.array(z.string())).default({}),
   subagents: z.record(z.string(), z.array(z.string())).default({}),
+  subagentModels: z.record(z.string(), z.string()).default({}),
 });
 
 // The merged shape every consumer (resolveRoleTools, SessionManager,

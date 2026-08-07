@@ -13,6 +13,7 @@ function makeConfig(overrides: Partial<HarnessConfig> = {}): HarnessConfig {
     compaction: { strategy: "none", keepLast: 20, tokenThreshold: 4000, summarizeThreshold: 40 },
     roles: { client: ["read_file"] },
     subagents: {},
+    subagentModels: {},
     ...overrides,
   };
 }

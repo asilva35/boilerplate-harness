@@ -47,6 +47,7 @@ async function main() {
     skillRegistry,
     harnessConfig.subagents,
     connectedMCP,
+    harnessConfig.subagentModels,
   );
   registerMCPTools(tools, connectedMCP);
 
@@ -80,7 +81,14 @@ async function main() {
   function switchProvider(name: string, model?: string): Provider {
     const newProvider = createProvider(name, model);
     agent.provider = newProvider;
-    refreshSubagentTools(tools, newProvider, harnessConfig.subagents, skillRegistry, connectedMCP);
+    refreshSubagentTools(
+      tools,
+      newProvider,
+      harnessConfig.subagents,
+      skillRegistry,
+      connectedMCP,
+      harnessConfig.subagentModels,
+    );
     return newProvider;
   }
 
