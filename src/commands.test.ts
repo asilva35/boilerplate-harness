@@ -4,6 +4,7 @@ import { Agent } from "./agent.js";
 import { runCommand } from "./commands.js";
 import { clear as clearDebugLog, isEnabled as isDebugEnabled, record, setEnabled as setDebugEnabled } from "./debug.js";
 import { MockProvider } from "./provider/mock.js";
+import type { Provider } from "./provider/types.js";
 import { ToolRegistry } from "./tools/registry.js";
 
 // debug.ts is a module-level singleton - reset it before every test in
@@ -14,17 +15,31 @@ beforeEach(() => {
   clearDebugLog();
 });
 
+// Phase 25: a working (not just type-satisfying) switchProvider stub - a
+// real MockProvider stands in for "a whole new backend," so /provider
+// tests can assert agent.provider actually changed. Tests that care about
+// the exact call args capture them via the returned `switches` array
+// instead of overriding this default.
 function loggingContext(agent: Agent) {
   const logs: string[] = [];
   let refreshCount = 0;
+  const switches: { name: string; model?: string }[] = [];
   return {
     ctx: {
       agent,
       log: (text: string) => logs.push(text),
       refreshHistory: () => refreshCount++,
+      switchProvider: (name: string, model?: string): Provider => {
+        switches.push({ name, model });
+        const provider = new MockProvider([]);
+        if (model) provider.setModel(model);
+        agent.provider = provider;
+        return provider;
+      },
     },
     logs,
     refreshCount: () => refreshCount,
+    switches,
   };
 }
 
@@ -135,6 +150,101 @@ test("/compact summarize asks the agent's own provider and replaces the whole hi
   assert.match((after[0].content[0] as { text: string }).text, /^\[earlier conversation summary\]/);
   assert.equal(refreshCount(), 1);
   assert.deepEqual(logs, ["compacted: 2 → 1 messages"]);
+});
+
+test("/tokens reports cumulative usage and estimated cost from the agent's provider", async () => {
+  const provider = new MockProvider([
+    { content: [{ type: "text", text: "hi" }], stopReason: "end_turn", usage: { inputTokens: 100, outputTokens: 50, cachedTokens: 0 } },
+  ]);
+  const agent = new Agent({ provider, tools: new ToolRegistry() });
+  await agent.send("hello");
+
+  const { ctx, logs } = loggingContext(agent);
+  await runCommand("/tokens", ctx);
+
+  assert.equal(logs.length, 1);
+  assert.match(logs[0], /session usage:/);
+  assert.match(logs[0], /input\s+100/);
+  assert.match(logs[0], /output\s+50/);
+  assert.match(logs[0], /est\. cost\s+\$0\.0002/); // (100*1 + 50*2) / 1_000_000
+});
+
+test("/tokens shows cached tokens only when there are any", async () => {
+  const noCache = new Agent({
+    provider: new MockProvider([
+      { content: [{ type: "text", text: "hi" }], stopReason: "end_turn", usage: { inputTokens: 10, outputTokens: 5, cachedTokens: 0 } },
+    ]),
+    tools: new ToolRegistry(),
+  });
+  await noCache.send("hello");
+  const { ctx: ctx1, logs: logs1 } = loggingContext(noCache);
+  await runCommand("/tokens", ctx1);
+  assert.doesNotMatch(logs1[0], /cached/);
+
+  const withCache = new Agent({
+    provider: new MockProvider([
+      { content: [{ type: "text", text: "hi" }], stopReason: "end_turn", usage: { inputTokens: 10, outputTokens: 5, cachedTokens: 3 } },
+    ]),
+    tools: new ToolRegistry(),
+  });
+  await withCache.send("hello");
+  const { ctx: ctx2, logs: logs2 } = loggingContext(withCache);
+  await runCommand("/tokens", ctx2);
+  assert.match(logs2[0], /cached\s+3/);
+});
+
+test("/model with no argument shows the current model and provider kind", async () => {
+  const agent = new Agent({ provider: new MockProvider([]), tools: new ToolRegistry() });
+  const { ctx, logs } = loggingContext(agent);
+
+  await runCommand("/model", ctx);
+
+  assert.match(logs[0], /current: mock\s+\(mock\)/);
+});
+
+test("/model <name> sets the model on the agent's current provider, in place", async () => {
+  const provider = new MockProvider([]);
+  const agent = new Agent({ provider, tools: new ToolRegistry() });
+  const { ctx, logs } = loggingContext(agent);
+
+  await runCommand("/model claude-opus-4-6", ctx);
+
+  assert.equal(provider.model, "claude-opus-4-6");
+  assert.equal(agent.provider, provider); // same instance - /model never swaps the provider object
+  assert.deepEqual(logs, ["model: claude-opus-4-6"]);
+});
+
+test("/provider with no argument shows the current provider and model", async () => {
+  const agent = new Agent({ provider: new MockProvider([]), tools: new ToolRegistry() });
+  const { ctx, logs } = loggingContext(agent);
+
+  await runCommand("/provider", ctx);
+
+  assert.match(logs[0], /current: mock\s+\(model: mock\)/);
+});
+
+test("/provider <name> [model] delegates to ctx.switchProvider and reports the result", async () => {
+  const agent = new Agent({ provider: new MockProvider([]), tools: new ToolRegistry() });
+  const { ctx, logs, switches } = loggingContext(agent);
+  const before = agent.provider;
+
+  await runCommand("/provider anthropic claude-haiku-4-5", ctx);
+
+  assert.deepEqual(switches, [{ name: "anthropic", model: "claude-haiku-4-5" }]);
+  assert.notEqual(agent.provider, before); // switchProvider swapped the whole object
+  assert.deepEqual(logs, ["provider: mock  (model: claude-haiku-4-5)"]); // "mock" - the stub always returns a MockProvider
+});
+
+test("/provider reports ctx.switchProvider's error instead of throwing", async () => {
+  const agent = new Agent({ provider: new MockProvider([]), tools: new ToolRegistry() });
+  const { ctx, logs } = loggingContext(agent);
+  ctx.switchProvider = () => {
+    throw new Error("Unknown provider \"bogus\"");
+  };
+
+  await runCommand("/provider bogus", ctx);
+
+  assert.deepEqual(logs, ['provider: Unknown provider "bogus"']);
 });
 
 test("/debug with no argument toggles on/off, reporting the new state", async () => {

@@ -15,7 +15,7 @@ import { type ConnectedMCPServer, registerMCPTools } from "../mcp/register.js";
 import type { Provider } from "../provider/types.js";
 import type { ServerMessage } from "./protocol.js";
 import type { SkillRegistry } from "../skills/registry.js";
-import { registerCatalogTools } from "../tools/catalog.js";
+import { registerCatalogTools, refreshSubagentTools } from "../tools/catalog.js";
 import { buildWriteDiff } from "../tools/diff.js";
 import { ToolRegistry } from "../tools/registry.js";
 
@@ -36,6 +36,12 @@ export interface Session {
   readonly tools: ToolRegistry;
   readonly sockets: Set<WebSocket>;
   pendingApproval: { resolve: (approved: boolean) => void } | null;
+  // Phase 25: backs this session's "/provider" command - constructs a new
+  // Provider, swaps it onto this session's Agent, and refreshes delegate_*
+  // subagent tools to use it. Not just a free function because it needs
+  // this session's own config.subagents/tools/skillRegistry/connectedMCP,
+  // captured in the closure create() builds below.
+  switchProvider: (name: string, model?: string) => Provider;
 }
 
 // Structural, not the concrete ProfileRegistry class - lets tests supply an
@@ -50,7 +56,15 @@ export interface SessionManagerOptions {
   // to share - each session resolves its own effective config (system
   // prompt, tool-pack, compaction, roles) from this by profile name.
   profiles: ProfileSource;
-  provider: Provider;
+  // Phase 25: same signature as provider/index.ts's real createProvider()
+  // (production callers pass that function directly) - called with no args
+  // once per new session instead of sharing one Provider instance across
+  // every session, and again with explicit (name, model) from
+  // switchProvider() below for "/provider". Each session now accumulates
+  // its own token usage/cost and can switch model/backend independently.
+  // Injectable so tests can supply a fake that accepts any name (e.g.
+  // "mock") without createProvider()'s real API-key checks.
+  createProvider: (name?: string, model?: string) => Provider;
   memoryStore: MemoryStore;
   skillRegistry: SkillRegistry;
   // Recent-sessions summary from Phase 16 - independent of profile (it's
@@ -109,11 +123,12 @@ export class SessionManager {
   private create(id: string, userId: string, role: string, profile: string): Session {
     const config = this.opts.profiles.get(profile);
     const toolNames = resolveRoleTools(config, role);
+    const provider = this.opts.createProvider();
     const tools = new ToolRegistry();
     registerCatalogTools(
       tools,
       toolNames,
-      this.opts.provider,
+      provider,
       this.opts.memoryStore,
       this.opts.skillRegistry,
       config.subagents, // Phase 23: per-subagent tool packs, from this session's own profile
@@ -145,13 +160,19 @@ export class SessionManager {
       sockets,
       pendingApproval: null,
       agent: undefined as unknown as Agent,
+      switchProvider: (name: string, model?: string): Provider => {
+        const newProvider = this.opts.createProvider(name, model);
+        session.agent.provider = newProvider;
+        refreshSubagentTools(tools, newProvider, config.subagents, this.opts.skillRegistry, this.opts.connectedMCP);
+        return newProvider;
+      },
     };
 
     session.agent = new Agent({
-      provider: this.opts.provider,
+      provider,
       tools,
       systemPrompt: config.systemPrompt + this.opts.memoryPreamble,
-      compactor: buildCompactor(config.compaction, this.opts.provider),
+      compactor: buildCompactor(config.compaction, provider),
       onToolCall: (name, rawInput) => broadcast({ type: "tool_call", name, input: rawInput }),
       onAssistantText: (text) => broadcast({ type: "assistant_text", text }),
       onTextDelta: (chunk) => broadcast({ type: "text_delta", text: chunk }),

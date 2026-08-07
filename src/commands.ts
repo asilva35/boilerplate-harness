@@ -7,7 +7,8 @@ import { NoCompaction, SlidingWindow, Summarize } from "./context/compactor.js";
 import { clear as clearDebugLog, findById, isEnabled, latest, setEnabled, snapshot } from "./debug.js";
 import type { DebugEvent } from "./debug.js";
 import type { Agent } from "./agent.js";
-import type { Block } from "./provider/types.js";
+import { knownProviders } from "./provider/index.js";
+import type { Block, Provider } from "./provider/types.js";
 
 export interface CommandContext {
   agent: Agent;
@@ -25,6 +26,14 @@ export interface CommandContext {
   // already-open tab would otherwise keep showing stale messages after a
   // command that changed them.
   refreshHistory?: () => void;
+  // Phase 25: "/provider" swaps the whole backend, not just the model on
+  // the existing one - each entry point implements this (constructs a new
+  // Provider via createProvider(), assigns it to agent.provider, and
+  // refreshes delegate_* subagent tools to use it - see
+  // tools/catalog.ts's refreshSubagentTools). Throws whatever
+  // createProvider() throws for an unknown provider name or a missing API
+  // key, letting cmdProvider report it instead of crashing the process.
+  switchProvider: (name: string, model?: string) => Provider;
 }
 
 type CommandHandler = (args: string, ctx: CommandContext) => void | Promise<void>;
@@ -44,6 +53,9 @@ const commands: Record<string, Command> = {
     usage: "/compact [sliding|none|summarize]",
     run: cmdCompact,
   },
+  tokens: { description: "show cumulative token usage and estimated cost", run: cmdTokens },
+  model: { description: "show or change the model", usage: "/model [name]", run: cmdModel },
+  provider: { description: "show or change the LLM provider", usage: "/provider [name] [model]", run: cmdProvider },
   debug: {
     description: "control the debug event log (toggle / inspect entries)",
     usage: "/debug [on|off|clear|ls|show [id]]",
@@ -135,6 +147,77 @@ async function cmdCompact(args: string, ctx: CommandContext): Promise<void> {
   ctx.agent.setMessages(compacted);
   ctx.refreshHistory?.();
   ctx.log(`compacted: ${before.length} → ${compacted.length} messages`);
+}
+
+function cmdTokens(_args: string, ctx: CommandContext): void {
+  const usage = ctx.agent.provider.getTotalUsage();
+  const cost = ctx.agent.provider.estimatedCostUSD();
+  const lines = ["session usage:"];
+  lines.push(`  input          ${formatThousands(usage.inputTokens)}`);
+  lines.push(`  output         ${formatThousands(usage.outputTokens)}`);
+  if (usage.cachedTokens > 0) lines.push(`  cached         ${formatThousands(usage.cachedTokens)}`);
+  lines.push(cost >= 0 ? `  est. cost      $${cost.toFixed(4)}` : "  est. cost      (unknown model — no rate)");
+  ctx.log(lines.join("\n"));
+}
+
+// Inserts thousands separators into a non-negative-friendly integer -
+// same presentation Go's formatThousands gives /tokens.
+function formatThousands(n: number): string {
+  const sign = n < 0 ? "-" : "";
+  return sign + Math.abs(n).toString().replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+}
+
+// Suggestions shown by /model when no model is passed, keyed by
+// Provider.kind. Any model id can be set - validation happens at the next
+// send() call, same as Go's knownModels.
+const KNOWN_MODELS: Record<string, string[]> = {
+  anthropic: ["claude-opus-4-7", "claude-opus-4-6", "claude-sonnet-4-6", "claude-haiku-4-5"],
+  // OpenRouter proxies many backends under one API - these are the ones
+  // this project's own defaults/examples already reference, not an
+  // exhaustive list of everything OpenRouter offers.
+  openrouter: ["anthropic/claude-opus-4.6", "anthropic/claude-sonnet-4.6", "anthropic/claude-haiku-4.5", "openai/gpt-5"],
+};
+
+function cmdModel(args: string, ctx: CommandContext): void {
+  const provider = ctx.agent.provider;
+  if (!args) {
+    const lines = [`current: ${provider.model}  (${provider.kind})`];
+    const suggestions = KNOWN_MODELS[provider.kind];
+    if (suggestions) {
+      lines.push("suggestions:");
+      for (const m of suggestions) lines.push(`  ${m}`);
+    }
+    lines.push("(or pass any model id — validated on next call)");
+    ctx.log(lines.join("\n"));
+    return;
+  }
+  provider.setModel(args);
+  ctx.log(`model: ${args}`);
+}
+
+function cmdProvider(args: string, ctx: CommandContext): void {
+  if (!args) {
+    const lines = [`current: ${ctx.agent.provider.kind}  (model: ${ctx.agent.provider.model})`];
+    lines.push("choices:");
+    for (const name of knownProviders) lines.push(`  ${name}`);
+    lines.push("usage: /provider <name> [model]");
+    ctx.log(lines.join("\n"));
+    return;
+  }
+
+  // Optional second token = model id for the new provider - same
+  // args.Fields()[0]/[1] split Go's cmdProvider does.
+  const [name, model] = args.split(/\s+/);
+  try {
+    const provider = ctx.switchProvider(name, model);
+    ctx.log(`provider: ${provider.kind}  (model: ${provider.model})`);
+  } catch (err) {
+    // createProvider() already throws a clear ConfigError for an unknown
+    // name or a missing API key - reported here instead of switching
+    // anyway and warning (which is what Go does), since failing at switch
+    // time is strictly more useful than failing on the next model call.
+    ctx.log(`provider: ${(err as Error).message}`);
+  }
 }
 
 function cmdDebug(args: string, ctx: CommandContext): void {

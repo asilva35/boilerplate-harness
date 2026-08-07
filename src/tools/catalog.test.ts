@@ -6,7 +6,7 @@ import type { ConnectedMCPServer } from "../mcp/register.js";
 import { MockProvider } from "../provider/mock.js";
 import { SkillRegistry } from "../skills/registry.js";
 import { ConfigError } from "../errors.js";
-import { buildToolPack, catalogToolNames, registerCatalogTools } from "./catalog.js";
+import { buildToolPack, catalogToolNames, refreshSubagentTools, registerCatalogTools } from "./catalog.js";
 import { ToolRegistry } from "./registry.js";
 
 // MCPClient has a private constructor/field, so a plain object can't
@@ -114,4 +114,46 @@ test("registerCatalogTools: with no subagent config, research falls back to the 
 
   const subagentToolNames = provider.calls[0].tools.map((t) => t.name);
   assert.deepEqual(subagentToolNames, ["read_file"]);
+});
+
+test("refreshSubagentTools: delegate_research talks to the NEW provider afterward, not the old one (Phase 25 /provider)", async () => {
+  const registry = new ToolRegistry();
+  const oldProvider = new MockProvider([{ content: [{ type: "text", text: "should never be called" }], stopReason: "end_turn" }]);
+  const newProvider = new MockProvider([{ content: [{ type: "text", text: "ok" }], stopReason: "end_turn" }]);
+  const memoryStore = new NoMemory();
+  const skillRegistry = new SkillRegistry([]);
+
+  registerCatalogTools(registry, ["delegate_research"], oldProvider, memoryStore, skillRegistry);
+  refreshSubagentTools(registry, newProvider, {}, skillRegistry, []);
+
+  await registry.execute("delegate_research", JSON.stringify({ task: "look something up" }));
+
+  assert.equal(oldProvider.calls.length, 0);
+  assert.equal(newProvider.calls.length, 1);
+});
+
+test("refreshSubagentTools: rebuilds the tool pack from the given subagentTools config, same as a fresh build would", async () => {
+  const registry = new ToolRegistry();
+  const provider = new MockProvider([{ content: [{ type: "text", text: "ok" }], stopReason: "end_turn" }]);
+  const memoryStore = new NoMemory();
+  const skillRegistry = new SkillRegistry([]);
+  const filesystem = fakeMCPServer("filesystem", [fakeToolDef("read_text_file")]);
+
+  registerCatalogTools(registry, ["delegate_research"], provider, memoryStore, skillRegistry); // default: read_file only
+  refreshSubagentTools(registry, provider, { research: ["filesystem_read_text_file"] }, skillRegistry, [filesystem]);
+
+  await registry.execute("delegate_research", JSON.stringify({ task: "look something up" }));
+
+  const subagentToolNames = provider.calls[0].tools.map((t) => t.name);
+  assert.deepEqual(subagentToolNames, ["filesystem_read_text_file"]);
+});
+
+test("refreshSubagentTools: never adds a delegate_<name> tool that wasn't already registered - it refreshes, doesn't expand scope", () => {
+  const registry = new ToolRegistry(); // delegate_research deliberately never registered
+  const provider = new MockProvider([]);
+  const skillRegistry = new SkillRegistry([]);
+
+  refreshSubagentTools(registry, provider, {}, skillRegistry, []);
+
+  assert.equal(registry.get("delegate_research"), undefined);
 });

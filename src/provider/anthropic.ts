@@ -7,17 +7,47 @@ import Anthropic from "@anthropic-ai/sdk";
 import { config } from "../config.js";
 import { record, recordCorrelated } from "../debug.js";
 import { withRetry } from "./retry.js";
-import type { Block, Message, Provider, Response, StopReason, ToolDef } from "./types.js";
+import type { Block, Message, Provider, Response, StopReason, ToolDef, Usage } from "./types.js";
+
+// Phase 25: per-million-token rates in USD. Update from
+// https://www.anthropic.com/pricing when rates change - same
+// hand-maintained-table approach as Go's modelPricing, since Anthropic's
+// API (unlike OpenRouter's, see openrouter.ts) doesn't report cost back.
+// No cache-rate column: this SDK version doesn't implement cache_control
+// (see the Usage type's own note), so cachedTokens is always 0 here and
+// would only ever multiply out to 0 anyway.
+const ANTHROPIC_PRICING: Record<string, { inputPerMillion: number; outputPerMillion: number }> = {
+  "claude-opus-4-7": { inputPerMillion: 15.0, outputPerMillion: 75.0 },
+  "claude-opus-4-6": { inputPerMillion: 15.0, outputPerMillion: 75.0 },
+  "claude-sonnet-4-6": { inputPerMillion: 3.0, outputPerMillion: 15.0 },
+  "claude-haiku-4-5": { inputPerMillion: 1.0, outputPerMillion: 5.0 },
+};
 
 export class AnthropicProvider implements Provider {
   private readonly client: Anthropic;
+  readonly kind = "anthropic";
   model: string;
+  private total: Usage = { inputTokens: 0, outputTokens: 0, cachedTokens: 0 };
 
   constructor(model: string = "claude-sonnet-4-6") {
     // maxRetries: 0 - retry/backoff is owned by withRetry() (Phase 9)
     // instead, so there's a single, testable place that decides it.
     this.client = new Anthropic({ apiKey: config.anthropicApiKey, maxRetries: 0 });
     this.model = model;
+  }
+
+  setModel(name: string): void {
+    this.model = name;
+  }
+
+  getTotalUsage(): Usage {
+    return { ...this.total };
+  }
+
+  estimatedCostUSD(): number {
+    const rates = ANTHROPIC_PRICING[this.model];
+    if (!rates) return -1;
+    return (this.total.inputTokens * rates.inputPerMillion + this.total.outputTokens * rates.outputPerMillion) / 1_000_000;
   }
 
   async send(
@@ -81,6 +111,9 @@ export class AnthropicProvider implements Provider {
       throw err;
     }
     const elapsed = Date.now() - start;
+
+    this.total.inputTokens += response.usage.input_tokens;
+    this.total.outputTokens += response.usage.output_tokens;
 
     const content: Block[] = [];
     for (const block of response.content) {

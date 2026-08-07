@@ -30,6 +30,7 @@ import path from "node:path";
 import { WebSocketServer, type WebSocket } from "ws";
 import type { Agent } from "./agent.js";
 import { runCommand } from "./commands.js";
+import { config } from "./config.js";
 import { setSink } from "./debug.js";
 import { reportFatal } from "./errors.js";
 import { harnessConfig, ProfileRegistry } from "./harness-config.js";
@@ -103,8 +104,6 @@ function broadcastTo(session: Session, msg: ServerMessage): void {
 }
 
 async function main() {
-  const provider = createProvider();
-
   const memorySession = await createMemoryStore();
   // Phase 22: no longer baked into one fixed systemPrompt - each session
   // resolves its own profile's systemPrompt and appends this same preamble
@@ -117,7 +116,13 @@ async function main() {
 
   const sessionManager = new SessionManager({
     profiles: new ProfileRegistry(),
-    provider,
+    // Phase 25: a fresh Provider per session instead of one shared
+    // instance - each session accumulates its own token usage/cost and
+    // can switch model/backend (/model, /provider) independently of every
+    // other concurrent session. Same function used for a session's
+    // initial provider (called with no args) and for "/provider" swaps
+    // (called with explicit name/model) - see SessionManager.
+    createProvider,
     memoryStore: memorySession.store,
     skillRegistry,
     memoryPreamble,
@@ -222,6 +227,7 @@ async function main() {
               agent: session.agent,
               log: (text) => broadcastTo(session, { type: "command_output", text }),
               refreshHistory: () => broadcastTo(session, { type: "history", messages: session.agent.getMessages() }),
+              switchProvider: (name, model) => session.switchProvider(name, model),
             })
           )
             return;
@@ -246,7 +252,11 @@ async function main() {
 
   httpServer.listen(WEB_PORT, "127.0.0.1", () => {
     const mcpToolNames = connectedMCP.flatMap((s) => s.defs.map((d) => `${s.name}_${d.name}`));
-    console.log(`boilerplate-harness — model: ${provider.model}`);
+    // Phase 25: no single provider instance to read .model off anymore -
+    // each session builds its own. This just reports what a NEW session
+    // will default to (env config), not any particular session's current
+    // model (which /model can change independently per session).
+    console.log(`boilerplate-harness — default provider: ${config.llmProvider} (model: ${config.llmModel || "(provider default)"})`);
     console.log(`tools: ${[...harnessConfig.tools, ...mcpToolNames].join(", ")}`);
     console.log(`listening on http://127.0.0.1:${WEB_PORT} (localhost only)`);
   });
@@ -254,8 +264,7 @@ async function main() {
   process.on("SIGINT", async () => {
     await Promise.all(connectedMCP.map((c) => c.client.close()));
     await finalizeSessions(
-      provider,
-      sessionManager.all().map((s) => s.agent.getMessages()),
+      sessionManager.all().map((s) => ({ provider: s.agent.provider, messages: s.agent.getMessages() })),
       memorySession,
     );
     process.exit(0);

@@ -46,7 +46,10 @@ export class Agent {
   // Public (Phase 13): commands.ts needs a Provider to build a Summarize
   // strategy on demand for "/compact summarize" - same reasoning `compactor`
   // below is already public for "/compact <strategy>" to read/replace it.
-  readonly provider: Provider;
+  // Not readonly since Phase 25: "/provider" swaps the whole backend
+  // (Anthropic <-> OpenRouter), not just the model on the existing one -
+  // see commands.ts's cmdProvider and CommandContext.switchProvider.
+  provider: Provider;
   private readonly tools: ToolRegistry;
   private readonly systemPrompt: string;
   private readonly maxTurns: number;

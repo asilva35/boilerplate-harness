@@ -99,6 +99,40 @@ function registerSubagents(
   registry.register(new ResearchSubagent(provider, researchTools));
 }
 
+// Phase 25: re-registers delegate_<name> tools already present in an
+// existing ToolRegistry, bound to a NEW provider - used by "/provider"
+// (commands.ts's switchProvider), which swaps agent.provider to a whole
+// new backend instance. Without this, delegate_research's ResearchSubagent
+// (and its skill-digestion call) would keep talking to the old provider
+// forever, since Phase 14/23 baked a provider reference into it at
+// construction. Mirrors Go's switchProvider() calling registerSubagents(p)
+// again after replacing rootAgent.Provider.
+//
+// Only refreshes tools that were already registered - a subagent whose
+// delegate_<name> was never in this deployment's tool list to begin with
+// stays absent, this never expands what a session can do.
+//
+// Deliberately doesn't touch the compaction strategy: Summarize (Phase 13)
+// also captures a provider reference at construction, and Go's own
+// switchProvider() doesn't rebuild its compactor either after a provider
+// swap - an accepted, faithfully-ported limitation, not an oversight.
+export function refreshSubagentTools(
+  registry: ToolRegistry,
+  provider: Provider,
+  subagentTools: Record<string, string[]>,
+  skillRegistry: SkillRegistry,
+  connectedMCP: ConnectedMCPServer[],
+): void {
+  const subagents = new SubagentRegistry();
+  registerSubagents(subagents, provider, subagentTools, connectedMCP);
+  for (const subagent of subagents.all()) {
+    const toolName = `delegate_${subagent.name}`;
+    if (registry.get(toolName)) {
+      registry.register(delegateTool(subagent, provider, skillRegistry));
+    }
+  }
+}
+
 // Tool names harness.config.json's "tools" array can reference, without
 // needing a Provider - scaffold.ts uses this to prompt "enable tool X?"
 // before any provider/API key exists yet.

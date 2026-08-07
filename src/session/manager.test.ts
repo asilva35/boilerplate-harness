@@ -34,7 +34,11 @@ class FakeProfiles implements ProfileSource {
 function manager(profiles: Record<string, HarnessConfig> = { default: DEFAULT_CONFIG }): SessionManager {
   return new SessionManager({
     profiles: new FakeProfiles(profiles),
-    provider: new MockProvider([]),
+    // Ignores name/model - a fake standing in for the real
+    // provider/index.ts createProvider(), which SessionManager also calls
+    // with explicit args for "/provider" (see the switchProvider test
+    // below).
+    createProvider: () => new MockProvider([]),
     memoryStore: new NoMemory(),
     skillRegistry: new SkillRegistry([]),
     memoryPreamble: "",
@@ -130,4 +134,22 @@ test("reconnecting to an existing session with a different profile throws instea
     () => m.get("alice", "local", "admin", "readonly"),
     /created with profile "default", got "readonly"/,
   );
+});
+
+test("Phase 25: each session gets its own Provider instance, not one shared across the process", () => {
+  const m = manager();
+  const a = m.get("alice", "local", "admin", "default");
+  const b = m.get("bob", "local", "admin", "default");
+
+  assert.notEqual(a.agent.provider, b.agent.provider);
+});
+
+test("Phase 25: session.switchProvider() swaps agent.provider to a new instance", () => {
+  const session = manager().get("alice", "local", "admin", "default");
+  const before = session.agent.provider;
+
+  const returned = session.switchProvider("mock", "some-model");
+
+  assert.notEqual(session.agent.provider, before);
+  assert.equal(session.agent.provider, returned);
 });

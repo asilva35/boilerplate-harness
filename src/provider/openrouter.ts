@@ -17,11 +17,27 @@ import OpenAI from "openai";
 import { config } from "../config.js";
 import { record, recordCorrelated } from "../debug.js";
 import { withRetry } from "./retry.js";
-import type { Block, Message, Provider, Response, StopReason, ToolDef } from "./types.js";
+import type { Block, Message, Provider, Response, StopReason, ToolDef, Usage } from "./types.js";
+
+// Phase 25: OpenRouter's own extension to the OpenAI-compatible usage
+// object (not part of the openai SDK's typed CompletionUsage) - verified
+// live against the real API: requesting stream_options.include_usage
+// (the standard OpenAI flag) makes OpenRouter's final chunk include this
+// too. `cost` is the actual USD OpenRouter billed for that call, computed
+// server-side from whichever underlying model/provider handled it - no
+// hand-maintained rate table needed here, unlike AnthropicProvider, since
+// OpenRouter proxies many different models under one API and reports the
+// real number back directly.
+interface OpenRouterUsageExtension {
+  cost?: number;
+}
 
 export class OpenRouterProvider implements Provider {
   private readonly client: OpenAI;
+  readonly kind = "openrouter";
   model: string;
+  private total: Usage = { inputTokens: 0, outputTokens: 0, cachedTokens: 0 };
+  private totalCostUSD = 0;
 
   constructor(model: string = "anthropic/claude-sonnet-4.6") {
     // maxRetries: 0 - retry/backoff is owned by withRetry() (Phase 9)
@@ -32,6 +48,23 @@ export class OpenRouterProvider implements Provider {
       maxRetries: 0,
     });
     this.model = model;
+  }
+
+  setModel(name: string): void {
+    this.model = name;
+  }
+
+  getTotalUsage(): Usage {
+    return { ...this.total };
+  }
+
+  // Unlike AnthropicProvider, never returns -1 for "unknown model" - every
+  // response that reports usage also reports its own real cost, so there's
+  // no rate table that could be missing an entry. A response that somehow
+  // doesn't report cost just contributes 0 to the running total instead of
+  // making the whole estimate "unknown."
+  estimatedCostUSD(): number {
+    return this.totalCostUSD;
   }
 
   // Retrying (Phase 9) re-opens the stream from scratch - see the same
@@ -102,6 +135,10 @@ export class OpenRouterProvider implements Provider {
       messages: [{ role: "system", content: systemPrompt }, ...toOpenAIMessages(messages)],
       tools: tools.length ? tools.map(toOpenAITool) : undefined,
       stream: true,
+      // Phase 25: the standard OpenAI streaming flag for a final usage
+      // chunk - verified live that OpenRouter honors it and adds its own
+      // `cost` field on top (see OpenRouterUsageExtension above).
+      stream_options: { include_usage: true },
     });
 
     let text = "";
@@ -126,6 +163,16 @@ export class OpenRouterProvider implements Provider {
         toolCalls.set(call.index, entry);
       }
       if (chunk.choices[0]?.finish_reason) finishReason = chunk.choices[0].finish_reason;
+
+      // Only the final chunk carries usage (see the include_usage doc
+      // comment above the request) - every other chunk's `usage` is null.
+      if (chunk.usage) {
+        const usage = chunk.usage as OpenAI.CompletionUsage & OpenRouterUsageExtension;
+        this.total.inputTokens += usage.prompt_tokens;
+        this.total.outputTokens += usage.completion_tokens;
+        this.total.cachedTokens += usage.prompt_tokens_details?.cached_tokens ?? 0;
+        this.totalCostUSD += usage.cost ?? 0;
+      }
     }
 
     const content: Block[] = [];

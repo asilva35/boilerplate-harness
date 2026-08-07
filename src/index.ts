@@ -14,8 +14,9 @@ import { harnessConfig } from "./harness-config.js";
 import { createMemoryStore, finalizeSession } from "./memory/index.js";
 import { connectMCPServers, loadConfig, registerMCPTools } from "./mcp/register.js";
 import { createProvider } from "./provider/index.js";
+import type { Provider } from "./provider/types.js";
 import { SkillRegistry } from "./skills/registry.js";
-import { registerCatalogTools } from "./tools/catalog.js";
+import { registerCatalogTools, refreshSubagentTools } from "./tools/catalog.js";
 import { ToolRegistry } from "./tools/registry.js";
 
 async function main() {
@@ -73,12 +74,25 @@ async function main() {
     },
   });
 
+  // Phase 25: backs "/provider" - swaps agent.provider to a whole new
+  // backend and refreshes delegate_* subagent tools to use it (see
+  // tools/catalog.ts's refreshSubagentTools for why that refresh matters).
+  function switchProvider(name: string, model?: string): Provider {
+    const newProvider = createProvider(name, model);
+    agent.provider = newProvider;
+    refreshSubagentTools(tools, newProvider, harnessConfig.subagents, skillRegistry, connectedMCP);
+    return newProvider;
+  }
+
   // Shared between the natural EOF exit (falls out of the loop below) and
   // Ctrl+C: without an explicit SIGINT handler, Node's default action is to
   // kill the process immediately with no cleanup and no goodbye.
   async function cleanup(): Promise<void> {
     await Promise.all(connectedMCP.map((c) => c.client.close()));
-    await finalizeSession(provider, agent.getMessages(), memorySession);
+    // agent.provider, not the outer `provider` - /provider may have
+    // swapped it mid-session, and summarizing with a stale reference
+    // would silently use the wrong backend/model.
+    await finalizeSession(agent.provider, agent.getMessages(), memorySession);
     console.log("\nBye!");
   }
   process.on("SIGINT", async () => {
@@ -101,7 +115,7 @@ async function main() {
     }
     if (!input.trim()) continue;
 
-    if (await runCommand(input, { agent, log: console.log })) {
+    if (await runCommand(input, { agent, log: console.log, switchProvider })) {
       console.log();
       continue;
     }

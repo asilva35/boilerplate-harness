@@ -32,6 +32,18 @@ export interface Response {
   stopReason: StopReason;
 }
 
+// Phase 25: token accounting for one provider, accumulated across every
+// send() call it's made. cachedTokens is 0 for AnthropicProvider (this
+// SDK version doesn't implement cache_control, so there's nothing to
+// report) but real for OpenRouterProvider, which gets it back from the
+// API regardless of whether we requested caching - a deliberate asymmetry
+// documented where each provider fills it in, not a bug.
+export interface Usage {
+  inputTokens: number;
+  outputTokens: number;
+  cachedTokens: number;
+}
+
 // Analogous to Go's Provider interface:
 //
 //   type Provider interface {
@@ -39,8 +51,23 @@ export interface Response {
 //       Model() string
 //       SetModel(name string)
 //   }
+//
+// Phase 25 adds: kind (Go does this with a type switch on the concrete
+// struct - ProviderKind() in main.go - since commands.ts must not import
+// concrete provider classes just to display which backend is active),
+// getTotalUsage()/estimatedCostUSD() (Go's TotalUsage()/EstimatedCostUSD(),
+// gated behind an interface type-assertion there since not every backend
+// necessarily reports cost - here every implementation does, so it's just
+// part of the interface), and setModel() (model already wasn't truly
+// readonly on the concrete classes, this makes the capability explicit).
 export interface Provider {
-  readonly model: string;
+  readonly kind: string;
+  model: string;
+  setModel(name: string): void;
+  getTotalUsage(): Usage;
+  // -1 means "no rate known for the current model" (AnthropicProvider,
+  // unrecognized model id) rather than "definitely free."
+  estimatedCostUSD(): number;
   // systemPrompt (Phase 14): passed explicitly by the caller (Agent)
   // instead of each provider reading a global config singleton, so a
   // subagent's Agent instance can run with its own system prompt through

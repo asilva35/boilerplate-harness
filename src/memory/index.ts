@@ -57,8 +57,18 @@ export async function finalizeSession(provider: Provider, messages: Message[], s
 // store, then closes the store once. Each summary is best-effort on its
 // own - one conversation failing to summarize shouldn't lose the others -
 // but close() always runs so whatever did succeed gets flushed.
-export async function finalizeSessions(provider: Provider, allMessages: Message[][], session: MemorySession): Promise<void> {
-  for (const messages of allMessages) {
+//
+// Phase 25: each session brings its own Provider now (no more single
+// shared instance every session used), so summarizing session A must use
+// session A's own provider/model, not some arbitrary "the one built at
+// startup" - summarizing every session with the wrong backend/model would
+// silently work but be a real correctness gap (wrong pricing tier, wrong
+// system-prompt-less capability assumptions for whatever the user picked).
+export async function finalizeSessions(
+  sessions: { provider: Provider; messages: Message[] }[],
+  session: MemorySession,
+): Promise<void> {
+  for (const { provider, messages } of sessions) {
     if (messages.length === 0) continue;
     try {
       const { summary, tags } = await summarizeSession(provider, messages);

@@ -23,6 +23,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Box, Text, useApp, useInput } from "ink";
 import type { Agent } from "../agent.js";
 import { runCommand } from "../commands.js";
+import type { Provider } from "../provider/types.js";
 import { buildWriteDiff } from "../tools/diff.js";
 import { InputLine } from "./InputLine.js";
 import { Spinner } from "./Spinner.js";
@@ -34,6 +35,8 @@ export interface AppProps {
   registerConfirm: (fn: (name: string, rawInput: string) => Promise<boolean>) => void;
   registerTextDelta: (fn: (chunk: string) => void) => void;
   registerStreamReset: (fn: () => void) => void;
+  // Phase 25: backs "/provider" - see tui.tsx's own switchProvider.
+  switchProvider: (name: string, model?: string) => Provider;
 }
 
 // How often accumulated text-delta chunks get flushed into React state
@@ -42,7 +45,7 @@ export interface AppProps {
 // apart from an occasional 60ms-batched update anyway.
 const STREAM_FLUSH_MS = 60;
 
-export function App({ agent, registerConfirm, registerTextDelta, registerStreamReset }: AppProps) {
+export function App({ agent, registerConfirm, registerTextDelta, registerStreamReset, switchProvider }: AppProps) {
   const { exit } = useApp();
   const [mode, setMode] = useState<Mode>("input");
   const [value, setValue] = useState("");
@@ -109,7 +112,7 @@ export function App({ agent, registerConfirm, registerTextDelta, registerStreamR
       setHistory((h) => [...h, line]);
       console.log(`> ${line}`);
 
-      if (await runCommand(line, { agent, log: console.log })) {
+      if (await runCommand(line, { agent, log: console.log, switchProvider })) {
         console.log();
         return;
       }
@@ -126,7 +129,7 @@ export function App({ agent, registerConfirm, registerTextDelta, registerStreamR
         setMode("input");
       }
     },
-    [agent, resetStream],
+    [agent, resetStream, switchProvider],
   );
 
   useInput((input, key) => {

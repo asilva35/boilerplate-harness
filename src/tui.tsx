@@ -11,8 +11,9 @@ import { harnessConfig } from "./harness-config.js";
 import { createMemoryStore, finalizeSession } from "./memory/index.js";
 import { connectMCPServers, loadConfig, registerMCPTools } from "./mcp/register.js";
 import { createProvider } from "./provider/index.js";
+import type { Provider } from "./provider/types.js";
 import { SkillRegistry } from "./skills/registry.js";
-import { registerCatalogTools } from "./tools/catalog.js";
+import { registerCatalogTools, refreshSubagentTools } from "./tools/catalog.js";
 import { ToolRegistry } from "./tools/registry.js";
 import { App } from "./ui/App.js";
 
@@ -65,6 +66,16 @@ async function main() {
     confirm: (name, rawInput) => confirmBridge(name, rawInput),
   });
 
+  // Phase 25: backs "/provider" - swaps agent.provider to a whole new
+  // backend and refreshes delegate_* subagent tools to use it (see
+  // tools/catalog.ts's refreshSubagentTools for why that refresh matters).
+  function switchProvider(name: string, model?: string): Provider {
+    const newProvider = createProvider(name, model);
+    agent.provider = newProvider;
+    refreshSubagentTools(tools, newProvider, harnessConfig.subagents, skillRegistry, connectedMCP);
+    return newProvider;
+  }
+
   console.log(`boilerplate-harness — model: ${provider.model}`);
   console.log(`tools: ${tools.definitions().map((t) => t.name).join(", ")}`);
   console.log("Type your message and press Enter, or /help for commands. Ctrl+D or /exit to quit.\n");
@@ -81,12 +92,16 @@ async function main() {
       registerStreamReset={(fn) => {
         streamResetBridge = fn;
       }}
+      switchProvider={switchProvider}
     />,
   );
 
   await waitUntilExit();
   await Promise.all(connectedMCP.map((c) => c.client.close()));
-  await finalizeSession(provider, agent.getMessages(), memorySession);
+  // agent.provider, not the outer `provider` - /provider may have swapped
+  // it mid-session, and summarizing with a stale reference would silently
+  // use the wrong backend/model.
+  await finalizeSession(agent.provider, agent.getMessages(), memorySession);
   console.log("\nBye!");
 }
 
