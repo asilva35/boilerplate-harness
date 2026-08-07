@@ -7,8 +7,10 @@ import { NoCompaction, SlidingWindow, Summarize } from "./context/compactor.js";
 import { clear as clearDebugLog, findById, isEnabled, latest, setEnabled, snapshot } from "./debug.js";
 import type { DebugEvent } from "./debug.js";
 import type { Agent } from "./agent.js";
+import { summarizeBlock } from "./messages.js";
 import { knownProviders } from "./provider/index.js";
-import type { Block, Provider } from "./provider/types.js";
+import type { Provider } from "./provider/types.js";
+import type { SessionSummary } from "./session/manager.js";
 
 export interface CommandContext {
   agent: Agent;
@@ -34,6 +36,11 @@ export interface CommandContext {
   // createProvider() throws for an unknown provider name or a missing API
   // key, letting cmdProvider report it instead of crashing the process.
   switchProvider: (name: string, model?: string) => Provider;
+  // Phase 27: only set by server.ts, the one entry point that ever holds
+  // more than one session in memory at once (SessionManager) - index.ts
+  // and tui.tsx are always exactly one Agent, so they simply omit this
+  // and /stats falls back to the same single-session output as /tokens.
+  listSessions?: () => SessionSummary[];
 }
 
 type CommandHandler = (args: string, ctx: CommandContext) => void | Promise<void>;
@@ -54,6 +61,10 @@ const commands: Record<string, Command> = {
     run: cmdCompact,
   },
   tokens: { description: "show cumulative token usage and estimated cost", run: cmdTokens },
+  stats: {
+    description: "like /tokens, but breaks down every session if the process tracks more than one",
+    run: cmdStats,
+  },
   model: { description: "show or change the model", usage: "/model [name]", run: cmdModel },
   provider: { description: "show or change the LLM provider", usage: "/provider [name] [model]", run: cmdProvider },
   debug: {
@@ -104,21 +115,6 @@ function cmdHistory(_args: string, ctx: CommandContext): void {
   ctx.log(lines.join("\n"));
 }
 
-function summarizeBlock(b: Block): string {
-  switch (b.type) {
-    case "text":
-      return truncate(b.text.replace(/\s+/g, " "), 60);
-    case "tool_use":
-      return `[tool_use ${b.toolName}]`;
-    case "tool_result":
-      return `[tool_result ${b.isError ? "error" : "ok"}]`;
-  }
-}
-
-function truncate(s: string, n: number): string {
-  return s.length <= n ? s : s.slice(0, n) + "…";
-}
-
 async function cmdCompact(args: string, ctx: CommandContext): Promise<void> {
   let strategy = ctx.agent.compactor;
   switch (args.toLowerCase()) {
@@ -157,6 +153,35 @@ function cmdTokens(_args: string, ctx: CommandContext): void {
   lines.push(`  output         ${formatThousands(usage.outputTokens)}`);
   if (usage.cachedTokens > 0) lines.push(`  cached         ${formatThousands(usage.cachedTokens)}`);
   lines.push(cost >= 0 ? `  est. cost      $${cost.toFixed(4)}` : "  est. cost      (unknown model — no rate)");
+  ctx.log(lines.join("\n"));
+}
+
+// Phase 27: without ctx.listSessions (index.ts/tui.tsx), there's only ever
+// one session to report on - same output as /tokens. With it (server.ts),
+// lists every session the process currently holds, not just the one that
+// ran the command - this is meant as an overview, not a "my own usage"
+// query (that's still what /tokens is for).
+function cmdStats(args: string, ctx: CommandContext): void {
+  if (!ctx.listSessions) {
+    cmdTokens(args, ctx);
+    return;
+  }
+
+  const sessions = ctx.listSessions();
+  if (sessions.length === 0) {
+    ctx.log("no sessions");
+    return;
+  }
+
+  const lines = [`${sessions.length} session${sessions.length === 1 ? "" : "s"}:`];
+  for (const s of sessions) {
+    const cost = s.estimatedCostUSD >= 0 ? `$${s.estimatedCostUSD.toFixed(4)}` : "(unknown model — no rate)";
+    lines.push(
+      `  ${s.id}  user=${s.userId} role=${s.role} profile=${s.profile}  ${s.kind}/${s.model}  ` +
+        `in=${formatThousands(s.usage.inputTokens)} out=${formatThousands(s.usage.outputTokens)} cost=${cost}`,
+    );
+    lines.push(`    last: ${s.lastMessage}`);
+  }
   ctx.log(lines.join("\n"));
 }
 

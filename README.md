@@ -443,6 +443,22 @@ Another guide-vs-reality note, same kind as Phases 23/24: the guide's own text s
 
 Try it: with the committed `tools.json`, ask the root agent a question that triggers `delegate_research`, then `/debug` - the subagent's `provider.send` events show `model=anthropic/claude-haiku-4.5` while the root agent's own calls before and after it still show `anthropic/claude-sonnet-4.6`, confirming both that the override took effect and that it didn't leak into the rest of the session.
 
+## Phase 27: Usage Dashboard — Web and CLI
+
+**Key concept:** a visual surface over data Phase 25 (tokens, cost, model) and Phase 20 (multi-session) already collect but never aggregate anywhere - how much every session has spent, on what model, and what it last said. No Go module to migrate: Go is a single-process, single-conversation CLI with no notion of "every session" to survey.
+
+Before writing code, a real fork: the guide's text says "a `/dashboard` view," which could mean a client-side URL route or, following the precedent `DebugPanel.tsx` (Phase 19) already set, a toggled overlay panel with no router at all. Asked Eloy which to build: **a real `/dashboard` route** - `react-router-dom` (new dependency) instead of the DebugPanel precedent.
+
+- `messages.ts` (new): `summarizeBlock`/`truncate`/`lastMessagePreview`, factored out of `commands.ts`'s `/history` so `session/manager.ts` could reuse the same "render a message compactly" logic for a session's last-message preview without the session layer importing the command layer.
+- `session/manager.ts`: `SessionSummary` (id/userId/role/profile/kind/model/usage/estimatedCostUSD/lastMessage) and `summarizeSession(session)`, the single source of truth both surfaces below read from - so the web dashboard and the CLI can't drift on what "a session's stats" means.
+- `server.ts`: `GET /api/sessions` returns `sessionManager.all().map(summarizeSession)` as JSON - a plain snapshot fetch, not pushed over the WebSocket like everything else, since a dashboard read is "give me the numbers right now," not something worth streaming incrementally.
+- `commands.ts`: new `/stats` command, `CommandContext` gains an optional `listSessions?: () => SessionSummary[]`. Only `server.ts` (the one entry point that ever holds more than one session via `SessionManager`) supplies it; `index.ts`/`tui.tsx` are always exactly one `Agent`, so they omit it and `/stats` falls back to the exact same output as `/tokens`. With it, `/stats` lists every session the process currently holds - not just the one that ran the command - since it's meant as an overview, while `/tokens` stays "my own numbers."
+- `web-app/`: `react-router-dom` added; `main.tsx` wraps the app in `BrowserRouter`; `App.tsx` is now a two-route `<Routes>` shell instead of the page itself. The former `App.tsx` body moved unchanged into `components/ChatPage.tsx` (`/`), plus a new "Dashboard" nav link in its header. New `components/DashboardPage.tsx` (`/dashboard`): fetches `/api/sessions` on mount and on a manual "Refresh" button, renders a plain table (session, user/role/profile, model, tokens, cost, last message) - no new UI-kit dependency, matching what the table needed. `server.ts`'s existing SPA fallback (its own Phase 10 comment already anticipated "if one gets added later") serves `index.html` for `/dashboard` with zero server changes.
+
+**Verified for real, not just typechecked:** backend - 193 tests, `npm run build` (web-app) clean. Then a live smoke test: `server.ts` started on a scratch port, two real WebSocket sessions (`admin`/`default` and `client`/`default`) each sent a real message through OpenRouter, then `GET /api/sessions` confirmed independent, correct `usage`/`estimatedCostUSD`/`role`/`lastMessage` per session, and a plain `GET /dashboard` confirmed the SPA fallback serves `index.html` for the new client-side route. **Not verified this session:** the dashboard actually rendering/refreshing in a real browser - no browser automation tool was available this session (the user was mid-install of the Claude in Chrome extension and chose to continue without it). Eloy should open `/dashboard` himself once `web-app` is running to confirm the table renders and Refresh/nav links work as expected.
+
+Try it: open two browser tabs with different `?session=` ids (or just chat normally in one), send a few messages, then visit `/dashboard` and confirm the numbers match what `/tokens` reports in each tab's own session.
+
 More phases land here as the project grows — see the commit history for the full progression.
 
 ## License

@@ -4,7 +4,7 @@ import type { HarnessConfig } from "../harness-config.js";
 import { NoMemory } from "../memory/no-memory.js";
 import { MockProvider } from "../provider/mock.js";
 import { SkillRegistry } from "../skills/registry.js";
-import { SessionManager, type ProfileSource } from "./manager.js";
+import { SessionManager, summarizeSession, type ProfileSource } from "./manager.js";
 
 function makeConfig(overrides: Partial<HarnessConfig> = {}): HarnessConfig {
   return {
@@ -153,4 +153,36 @@ test("Phase 25: session.switchProvider() swaps agent.provider to a new instance"
 
   assert.notEqual(session.agent.provider, before);
   assert.equal(session.agent.provider, returned);
+});
+
+test("Phase 27: summarizeSession reports identity, model, usage/cost, and a preview of the last message", async () => {
+  const provider = new MockProvider([{ content: [{ type: "text", text: "hi there" }], stopReason: "end_turn" }]);
+  provider.setModel("cheap-model");
+  const m = new SessionManager({
+    profiles: new FakeProfiles({ default: DEFAULT_CONFIG }),
+    createProvider: () => provider,
+    memoryStore: new NoMemory(),
+    skillRegistry: new SkillRegistry([]),
+    memoryPreamble: "",
+    connectedMCP: [],
+  });
+  const session = m.get("alice", "local", "client", "default");
+  await session.agent.send("hello");
+
+  const summary = summarizeSession(session);
+
+  assert.equal(summary.id, "alice");
+  assert.equal(summary.userId, "local");
+  assert.equal(summary.role, "client");
+  assert.equal(summary.profile, "default");
+  assert.equal(summary.kind, "mock");
+  assert.equal(summary.model, "cheap-model");
+  assert.deepEqual(summary.usage, provider.getTotalUsage());
+  assert.equal(summary.estimatedCostUSD, provider.estimatedCostUSD());
+  assert.equal(summary.lastMessage, "[assistant] hi there");
+});
+
+test("Phase 27: summarizeSession on a session with no messages yet says so instead of crashing", () => {
+  const session = manager().get("alice", "local", "admin", "default");
+  assert.equal(summarizeSession(session).lastMessage, "(no messages yet)");
 });

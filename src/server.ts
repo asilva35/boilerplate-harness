@@ -37,7 +37,7 @@ import { harnessConfig, ProfileRegistry } from "./harness-config.js";
 import { createMemoryStore, finalizeSessions } from "./memory/index.js";
 import { connectMCPServers, loadConfig } from "./mcp/register.js";
 import { createProvider } from "./provider/index.js";
-import { SessionManager, type Session } from "./session/manager.js";
+import { SessionManager, summarizeSession, type Session } from "./session/manager.js";
 import type { ClientMessage, ServerMessage } from "./session/protocol.js";
 import { SkillRegistry } from "./skills/registry.js";
 
@@ -155,6 +155,16 @@ async function main() {
       return;
     }
 
+    // Phase 27: the dashboard's data source (web-app/src's DashboardPage) -
+    // a plain snapshot fetch, not pushed over the WebSocket like everything
+    // else, since it's read on demand rather than something a session
+    // streams as it happens.
+    if (req.url === "/api/sessions") {
+      const summaries = sessionManager.all().map(summarizeSession);
+      res.writeHead(200, { "content-type": "application/json; charset=utf-8" }).end(JSON.stringify(summaries));
+      return;
+    }
+
     void serveWebApp(req.url ?? "/", res);
   });
 
@@ -228,6 +238,10 @@ async function main() {
               log: (text) => broadcastTo(session, { type: "command_output", text }),
               refreshHistory: () => broadcastTo(session, { type: "history", messages: session.agent.getMessages() }),
               switchProvider: (name, model) => session.switchProvider(name, model),
+              // Phase 27: every session the process currently holds, not
+              // just this one - /stats here is an overview, "my own
+              // numbers" is still what /tokens is for.
+              listSessions: () => sessionManager.all().map(summarizeSession),
             })
           )
             return;

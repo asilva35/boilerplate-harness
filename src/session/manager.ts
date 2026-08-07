@@ -10,9 +10,10 @@ import { Agent } from "../agent.js";
 import { buildCompactor } from "../context/compactor.js";
 import { ConfigError } from "../errors.js";
 import { resolveRoleTools, type HarnessConfig } from "../harness-config.js";
+import { lastMessagePreview } from "../messages.js";
 import type { MemoryStore } from "../memory/types.js";
 import { type ConnectedMCPServer, registerMCPTools } from "../mcp/register.js";
-import type { Provider } from "../provider/types.js";
+import type { Provider, Usage } from "../provider/types.js";
 import type { ServerMessage } from "./protocol.js";
 import type { SkillRegistry } from "../skills/registry.js";
 import { registerCatalogTools, refreshSubagentTools } from "../tools/catalog.js";
@@ -42,6 +43,37 @@ export interface Session {
   // this session's own config.subagents/tools/skillRegistry/connectedMCP,
   // captured in the closure create() builds below.
   switchProvider: (name: string, model?: string) => Provider;
+}
+
+// Phase 27: a point-in-time snapshot of one session's identity and spend -
+// what the web dashboard (server.ts's GET /api/sessions) and the CLI's
+// /stats command both actually need, without handing either of them the
+// live Session (and therefore write access to its Agent/sockets).
+export interface SessionSummary {
+  readonly id: string;
+  readonly userId: string;
+  readonly role: string;
+  readonly profile: string;
+  readonly kind: string;
+  readonly model: string;
+  readonly usage: Usage;
+  readonly estimatedCostUSD: number;
+  readonly lastMessage: string;
+}
+
+export function summarizeSession(session: Session): SessionSummary {
+  const { provider } = session.agent;
+  return {
+    id: session.id,
+    userId: session.userId,
+    role: session.role,
+    profile: session.profile,
+    kind: provider.kind,
+    model: provider.model,
+    usage: provider.getTotalUsage(),
+    estimatedCostUSD: provider.estimatedCostUSD(),
+    lastMessage: lastMessagePreview(session.agent.getMessages()),
+  };
 }
 
 // Structural, not the concrete ProfileRegistry class - lets tests supply an

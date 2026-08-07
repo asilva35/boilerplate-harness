@@ -43,6 +43,21 @@ export type ServerMessage =
 
 export type ClientMessage = { type: "input"; line: string } | { type: "confirm_response"; approved: boolean };
 
+// Mirrors src/session/manager.ts's SessionSummary (Phase 27) - the shape
+// GET /api/sessions returns, one entry per session the server process
+// currently holds.
+export interface SessionSummary {
+  id: string;
+  userId: string;
+  role: string;
+  profile: string;
+  kind: string;
+  model: string;
+  usage: { inputTokens: number; outputTokens: number; cachedTokens: number };
+  estimatedCostUSD: number;
+  lastMessage: string;
+}
+
 export function truncate(s: string, n: number): string {
   return s.length <= n ? s : s.slice(0, n) + "…";
 }

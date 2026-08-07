@@ -1,6 +1,7 @@
 import { test, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import { Agent } from "./agent.js";
+import type { CommandContext } from "./commands.js";
 import { runCommand } from "./commands.js";
 import { clear as clearDebugLog, isEnabled as isDebugEnabled, record, setEnabled as setDebugEnabled } from "./debug.js";
 import { MockProvider } from "./provider/mock.js";
@@ -36,7 +37,7 @@ function loggingContext(agent: Agent) {
         agent.provider = provider;
         return provider;
       },
-    },
+    } as CommandContext,
     logs,
     refreshCount: () => refreshCount,
     switches,
@@ -191,6 +192,69 @@ test("/tokens shows cached tokens only when there are any", async () => {
   const { ctx: ctx2, logs: logs2 } = loggingContext(withCache);
   await runCommand("/tokens", ctx2);
   assert.match(logs2[0], /cached\s+3/);
+});
+
+test("/stats with no ctx.listSessions falls back to the same output as /tokens", async () => {
+  const provider = new MockProvider([
+    { content: [{ type: "text", text: "hi" }], stopReason: "end_turn", usage: { inputTokens: 10, outputTokens: 5, cachedTokens: 0 } },
+  ]);
+  const agent = new Agent({ provider, tools: new ToolRegistry() });
+  await agent.send("hello");
+
+  const { ctx: statsCtx, logs: statsLogs } = loggingContext(agent);
+  await runCommand("/stats", statsCtx);
+  const { ctx: tokensCtx, logs: tokensLogs } = loggingContext(agent);
+  await runCommand("/tokens", tokensCtx);
+
+  assert.deepEqual(statsLogs, tokensLogs);
+});
+
+test("/stats with ctx.listSessions lists every session, not just the current one", async () => {
+  const agent = new Agent({ provider: new MockProvider([]), tools: new ToolRegistry() });
+  const { ctx, logs } = loggingContext(agent);
+  ctx.listSessions = () => [
+    {
+      id: "alice",
+      userId: "local",
+      role: "admin",
+      profile: "default",
+      kind: "anthropic",
+      model: "claude-sonnet-4-6",
+      usage: { inputTokens: 1000, outputTokens: 500, cachedTokens: 0 },
+      estimatedCostUSD: 0.0105,
+      lastMessage: "[assistant] hi there",
+    },
+    {
+      id: "bob",
+      userId: "local",
+      role: "client",
+      profile: "readonly",
+      kind: "openrouter",
+      model: "anthropic/claude-haiku-4.5",
+      usage: { inputTokens: 200, outputTokens: 50, cachedTokens: 0 },
+      estimatedCostUSD: -1,
+      lastMessage: "(no messages yet)",
+    },
+  ];
+
+  await runCommand("/stats", ctx);
+
+  assert.equal(logs.length, 1);
+  assert.match(logs[0], /2 sessions:/);
+  assert.match(logs[0], /alice.*user=local role=admin profile=default.*anthropic\/claude-sonnet-4-6/);
+  assert.match(logs[0], /in=1,000 out=500 cost=\$0\.0105/);
+  assert.match(logs[0], /last: \[assistant] hi there/);
+  assert.match(logs[0], /bob.*cost=\(unknown model — no rate\)/);
+});
+
+test("/stats with ctx.listSessions returning no sessions reports that instead of an empty list", async () => {
+  const agent = new Agent({ provider: new MockProvider([]), tools: new ToolRegistry() });
+  const { ctx, logs } = loggingContext(agent);
+  ctx.listSessions = () => [];
+
+  await runCommand("/stats", ctx);
+
+  assert.deepEqual(logs, ["no sessions"]);
 });
 
 test("/model with no argument shows the current model and provider kind", async () => {
