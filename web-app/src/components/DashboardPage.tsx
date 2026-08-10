@@ -49,6 +49,9 @@ export function DashboardPage() {
           Refresh
         </Button>
         <Button variant="ghost" size="sm" asChild>
+          <Link to="/chats">Chats</Link>
+        </Button>
+        <Button variant="ghost" size="sm" asChild>
           <Link to="/">Back to chat</Link>
         </Button>
       </header>

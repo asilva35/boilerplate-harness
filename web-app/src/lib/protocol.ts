@@ -58,6 +58,22 @@ export interface SessionSummary {
   lastMessage: string;
 }
 
+// Mirrors src/history/types.ts's ChatSummary (Phase 28) - the shape
+// GET /api/chats returns, one entry per saved conversation. Unlike
+// SessionSummary above, this survives a server restart (it's the on-disk
+// archive, not the live SessionManager).
+export interface ChatSummary {
+  id: string;
+  title: string;
+  pinned: boolean;
+  userId: string;
+  role: string;
+  profile: string;
+  updatedAt: string;
+  messageCount: number;
+  lastMessage: string;
+}
+
 export function truncate(s: string, n: number): string {
   return s.length <= n ? s : s.slice(0, n) + "…";
 }

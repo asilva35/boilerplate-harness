@@ -5,3 +5,6 @@ mcp.json
 # Agent memory (Phase 16) - user/session-specific, never committed.
 .harness/sessions/
 .harness/index.json
+
+# Saved chat history (Phase 28) - user/session-specific, never committed.
+.harness/chats/

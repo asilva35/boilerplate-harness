@@ -23,7 +23,7 @@
 // from Phase 6, still reachable at /legacy for reference.
 
 import { randomUUID } from "node:crypto";
-import { createServer, type ServerResponse } from "node:http";
+import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
@@ -32,8 +32,10 @@ import type { Agent } from "./agent.js";
 import { runCommand } from "./commands.js";
 import { config } from "./config.js";
 import { setSink } from "./debug.js";
-import { reportFatal } from "./errors.js";
+import { ConfigError, reportFatal } from "./errors.js";
 import { harnessConfig, ProfileRegistry } from "./harness-config.js";
+import { toMarkdown } from "./history/export.js";
+import { ChatHistoryStore } from "./history/store.js";
 import { createMemoryStore, finalizeSessions } from "./memory/index.js";
 import { connectMCPServers, loadConfig } from "./mcp/register.js";
 import { createProvider } from "./provider/index.js";
@@ -103,6 +105,43 @@ function broadcastTo(session: Session, msg: ServerMessage): void {
   }
 }
 
+// Phase 28: reads and JSON-parses a request body for PATCH /api/chats/:id.
+// The other routes below are all query-string driven (GET), so this is the
+// only handler that needs one.
+async function readJsonBody(req: IncomingMessage): Promise<unknown> {
+  const chunks: Buffer[] = [];
+  for await (const chunk of req) chunks.push(chunk as Buffer);
+  const raw = Buffer.concat(chunks).toString("utf-8");
+  return raw ? JSON.parse(raw) : {};
+}
+
+// A chat's title is user-controlled (rename via PATCH) and ends up in a
+// Content-Disposition header for exports - stripped down to a safe,
+// unquoted filename fragment rather than escaped, since nothing here needs
+// non-ASCII or punctuation to round-trip.
+function sanitizeFilename(title: string): string {
+  return title.replace(/[^A-Za-z0-9 _-]/g, "").trim().slice(0, 60);
+}
+
+// Best-effort archive write, called after every completed turn and once
+// more per session on shutdown (see the SIGINT handler below) - "at close,
+// or periodically" per the guide. Never lets a persistence failure surface
+// as a broken turn: the live conversation already succeeded or failed on
+// its own terms by the time this runs.
+async function persistChat(chatHistory: ChatHistoryStore, session: Session): Promise<void> {
+  try {
+    await chatHistory.upsert({
+      id: session.id,
+      userId: session.userId,
+      role: session.role,
+      profile: session.profile,
+      messages: session.agent.getMessages(),
+    });
+  } catch (err) {
+    console.error(`chat history: failed to persist session ${session.id}: ${(err as Error).message}`);
+  }
+}
+
 async function main() {
   const memorySession = await createMemoryStore();
   // Phase 22: no longer baked into one fixed systemPrompt - each session
@@ -113,6 +152,12 @@ async function main() {
 
   const mcpConfig = await loadConfig("mcp.json");
   const connectedMCP = mcpConfig ? await connectMCPServers(mcpConfig) : [];
+
+  // Phase 28: the saved-conversations archive backing the web "Chats"
+  // list - separate from memorySession above (Phase 16, what the *agent*
+  // recalls) and from the SessionManager below (Phase 20, live in-process
+  // sessions only, gone on restart).
+  const chatHistory = await ChatHistoryStore.open();
 
   const sessionManager = new SessionManager({
     profiles: new ProfileRegistry(),
@@ -143,12 +188,9 @@ async function main() {
   });
 
   const httpServer = createServer((req, res) => {
-    if (req.method !== "GET") {
-      res.writeHead(404).end("not found");
-      return;
-    }
+    const url = new URL(req.url ?? "/", "http://localhost");
 
-    if (req.url === "/legacy" || req.url === "/legacy/") {
+    if (req.method === "GET" && (url.pathname === "/legacy" || url.pathname === "/legacy/")) {
       readFile(LEGACY_HTML_PATH)
         .then((html) => res.writeHead(200, { "content-type": "text/html; charset=utf-8" }).end(html))
         .catch((err) => res.writeHead(500).end(`error reading web/index.html: ${(err as Error).message}`));
@@ -159,9 +201,89 @@ async function main() {
     // a plain snapshot fetch, not pushed over the WebSocket like everything
     // else, since it's read on demand rather than something a session
     // streams as it happens.
-    if (req.url === "/api/sessions") {
+    if (req.method === "GET" && url.pathname === "/api/sessions") {
       const summaries = sessionManager.all().map(summarizeSession);
       res.writeHead(200, { "content-type": "application/json; charset=utf-8" }).end(JSON.stringify(summaries));
+      return;
+    }
+
+    // Phase 28: the saved-chats archive - list/rename/pin/export, backing
+    // web-app's ChatHistoryPage. Unlike /api/sessions above, this survives
+    // a server restart (it's reading chatHistory's on-disk index, not the
+    // in-memory SessionManager).
+    if (req.method === "GET" && url.pathname === "/api/chats") {
+      res.writeHead(200, { "content-type": "application/json; charset=utf-8" }).end(JSON.stringify(chatHistory.list()));
+      return;
+    }
+
+    const chatMatch = url.pathname.match(/^\/api\/chats\/([^/]+)$/);
+    if (chatMatch) {
+      const id = decodeURIComponent(chatMatch[1]);
+      if (req.method !== "PATCH") {
+        res.writeHead(405).end("method not allowed");
+        return;
+      }
+      void (async () => {
+        let body: unknown;
+        try {
+          body = await readJsonBody(req);
+        } catch {
+          res.writeHead(400).end("invalid JSON body");
+          return;
+        }
+        const { title, pinned } = (body ?? {}) as { title?: unknown; pinned?: unknown };
+        try {
+          const summary = await chatHistory.update(id, {
+            title: typeof title === "string" ? title : undefined,
+            pinned: typeof pinned === "boolean" ? pinned : undefined,
+          });
+          res.writeHead(200, { "content-type": "application/json; charset=utf-8" }).end(JSON.stringify(summary));
+        } catch (err) {
+          if (err instanceof ConfigError) {
+            res.writeHead(404).end(err.message);
+          } else {
+            res.writeHead(500).end((err as Error).message);
+          }
+        }
+      })();
+      return;
+    }
+
+    const exportMatch = url.pathname.match(/^\/api\/chats\/([^/]+)\/export$/);
+    if (exportMatch) {
+      if (req.method !== "GET") {
+        res.writeHead(405).end("method not allowed");
+        return;
+      }
+      const id = decodeURIComponent(exportMatch[1]);
+      void chatHistory.get(id).then((record) => {
+        if (!record) {
+          res.writeHead(404).end("not found");
+          return;
+        }
+        const format = url.searchParams.get("format") === "json" ? "json" : "md";
+        const filename = `${sanitizeFilename(record.title) || record.id}.${format}`;
+        if (format === "json") {
+          res
+            .writeHead(200, {
+              "content-type": "application/json; charset=utf-8",
+              "content-disposition": `attachment; filename="${filename}"`,
+            })
+            .end(JSON.stringify(record, null, 2));
+        } else {
+          res
+            .writeHead(200, {
+              "content-type": "text/markdown; charset=utf-8",
+              "content-disposition": `attachment; filename="${filename}"`,
+            })
+            .end(toMarkdown(record));
+        }
+      });
+      return;
+    }
+
+    if (req.method !== "GET") {
+      res.writeHead(404).end("not found");
       return;
     }
 
@@ -253,6 +375,7 @@ async function main() {
             broadcastTo(session, { type: "error", message: (err as Error).message });
           } finally {
             broadcastTo(session, { type: "mode", mode: "idle" });
+            await persistChat(chatHistory, session);
           }
         })();
       }
@@ -277,6 +400,12 @@ async function main() {
 
   process.on("SIGINT", async () => {
     await Promise.all(connectedMCP.map((c) => c.client.close()));
+    // Final archive flush - covers the edge case where a session's last
+    // mutation was a command (e.g. /clear) rather than a send(), which is
+    // the only other place persistChat() runs. Each session's own turn
+    // handler already keeps chatHistory current turn-by-turn, so this is a
+    // safety net, not the primary write path.
+    await Promise.all(sessionManager.all().map((s) => persistChat(chatHistory, s)));
     await finalizeSessions(
       sessionManager.all().map((s) => ({ provider: s.agent.provider, messages: s.agent.getMessages() })),
       memorySession,

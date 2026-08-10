@@ -22,6 +22,9 @@ export function ChatPage() {
         <h1 className="text-sm font-semibold">boilerplate-harness</h1>
         <StatusBadge status={status} />
         <Button variant="ghost" size="sm" className="ml-auto" asChild>
+          <Link to="/chats">Chats</Link>
+        </Button>
+        <Button variant="ghost" size="sm" asChild>
           <Link to="/dashboard">Dashboard</Link>
         </Button>
         {/* Toggles whether this panel is visible - debug logging itself
