@@ -50,11 +50,11 @@ test("returns plain text when the model makes no tool calls", async () => {
   assert.equal(result, "hello there");
 });
 
-test("send() with images appends an image block per attachment, after the text block", async () => {
+test("send() with extra blocks appends each one after the text block", async () => {
   const provider = new MockProvider([{ content: [{ type: "text", text: "I see a cat" }], stopReason: "end_turn" }]);
   const agent = new Agent({ provider, tools: registryWith() });
 
-  await agent.send("what's in this photo?", [{ mediaType: "image/png", data: "base64data" }]);
+  await agent.send("what's in this photo?", [{ type: "image", mediaType: "image/png", data: "base64data" }]);
 
   const sent = provider.calls[0].messages[0].content;
   assert.deepEqual(sent, [
@@ -63,13 +63,25 @@ test("send() with images appends an image block per attachment, after the text b
   ]);
 });
 
-test("send() with an empty prompt but images attached sends just the image block, no empty text block", async () => {
+test("send() with an empty prompt but blocks attached sends just those blocks, no empty text block", async () => {
   const provider = new MockProvider([{ content: [{ type: "text", text: "a cat" }], stopReason: "end_turn" }]);
   const agent = new Agent({ provider, tools: registryWith() });
 
-  await agent.send("", [{ mediaType: "image/png", data: "base64data" }]);
+  await agent.send("", [{ type: "image", mediaType: "image/png", data: "base64data" }]);
 
   assert.deepEqual(provider.calls[0].messages[0].content, [{ type: "image", mediaType: "image/png", data: "base64data" }]);
+});
+
+test("send() threads a Phase 30 document text block through the same way as an image block", async () => {
+  const provider = new MockProvider([{ content: [{ type: "text", text: "summary" }], stopReason: "end_turn" }]);
+  const agent = new Agent({ provider, tools: registryWith() });
+
+  await agent.send("summarize this", [{ type: "text", text: "[document: report.pdf, 2 page(s)]\nlorem ipsum" }]);
+
+  assert.deepEqual(provider.calls[0].messages[0].content, [
+    { type: "text", text: "summarize this" },
+    { type: "text", text: "[document: report.pdf, 2 page(s)]\nlorem ipsum" },
+  ]);
 });
 
 test("executes a tool call and feeds the result back to the provider", async () => {

@@ -20,6 +20,7 @@ import { ResearchSubagent } from "../subagent/research.js";
 import { SubagentRegistry } from "../subagent/registry.js";
 import { bashTool } from "./bash.js";
 import { estimateScopeTool } from "./estimate_scope.js";
+import { readDocumentTool } from "./read_document.js";
 import { readFileTool } from "./read_file.js";
 import { recallTool } from "./recall.js";
 import { rememberTool } from "./remember.js";
@@ -32,6 +33,9 @@ const STATIC_CATALOG: Record<string, Tool> = {
   write_file: writeFileTool,
   bash: bashTool,
   estimate_scope: estimateScopeTool,
+  // Phase 30: same read-only tier as read_file - text extraction from a
+  // PDF already on disk.
+  read_document: readDocumentTool,
 };
 
 // Phase 16: remember/recall need a MemoryStore to construct, same reason

@@ -1,7 +1,7 @@
 {
-  "tools": ["read_file", "write_file", "bash", "delegate_research", "estimate_scope", "remember", "recall"],
+  "tools": ["read_file", "write_file", "bash", "delegate_research", "estimate_scope", "remember", "recall", "read_document"],
   "roles": {
-    "client": ["read_file", "delegate_research", "estimate_scope", "recall"]
+    "client": ["read_file", "delegate_research", "estimate_scope", "recall", "read_document"]
   },
   "subagentModels": {
     "research": "anthropic/claude-haiku-4.5"

@@ -1,29 +1,38 @@
 import { useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
-import type { ImageAttachment } from "@/lib/protocol";
+import type { DocumentAttachment, ImageAttachment } from "@/lib/protocol";
 
 // Mirrors anthropic.ts's ImageBlockParam.Source["media_type"] union - the
 // narrowest common denominator between the two providers (OpenRouter
 // itself accepts more, but there's no point letting a user attach
 // something that breaks the moment they switch to Anthropic via
 // /provider).
-const ACCEPTED_MEDIA_TYPES = ["image/png", "image/jpeg", "image/gif", "image/webp"];
-const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
+const ACCEPTED_IMAGE_TYPES = ["image/png", "image/jpeg", "image/gif", "image/webp"];
+// Phase 30: PDFs only, per the guide's scope - not "any document format".
+const ACCEPTED_DOCUMENT_TYPES = ["application/pdf"];
+const ACCEPTED_TYPES = [...ACCEPTED_IMAGE_TYPES, ...ACCEPTED_DOCUMENT_TYPES];
+const MAX_FILE_BYTES = 15 * 1024 * 1024; // PDFs legitimately run larger than a typical photo
 
-interface Attachment extends ImageAttachment {
-  id: number;
-  previewUrl: string;
-}
+type Attachment =
+  | ({ id: number; kind: "image" } & ImageAttachment & { previewUrl: string })
+  | ({ id: number; kind: "document" } & DocumentAttachment);
 
 function fileToAttachment(file: File, id: number): Promise<Attachment | null> {
-  if (!ACCEPTED_MEDIA_TYPES.includes(file.type) || file.size > MAX_IMAGE_BYTES) return Promise.resolve(null);
+  const isImage = ACCEPTED_IMAGE_TYPES.includes(file.type);
+  const isDocument = ACCEPTED_DOCUMENT_TYPES.includes(file.type);
+  if ((!isImage && !isDocument) || file.size > MAX_FILE_BYTES) return Promise.resolve(null);
+
   return new Promise((resolve) => {
     const reader = new FileReader();
     reader.onload = () => {
       const dataUrl = reader.result as string;
       const data = dataUrl.slice(dataUrl.indexOf(",") + 1);
-      resolve({ id, mediaType: file.type, data, previewUrl: dataUrl });
+      resolve(
+        isImage
+          ? { id, kind: "image", mediaType: file.type, data, previewUrl: dataUrl }
+          : { id, kind: "document", mediaType: file.type, data, filename: file.name },
+      );
     };
     reader.onerror = () => resolve(null);
     reader.readAsDataURL(file);
@@ -35,7 +44,7 @@ export function ChatInput({
   onSend,
 }: {
   disabled: boolean;
-  onSend: (line: string, images?: ImageAttachment[]) => void;
+  onSend: (line: string, images?: ImageAttachment[], documents?: DocumentAttachment[]) => void;
 }) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -48,7 +57,7 @@ export function ChatInput({
     const results = await Promise.all([...files].map((f) => fileToAttachment(f, nextAttachmentId.current++)));
     const accepted = results.filter((a): a is Attachment => a !== null);
     if (accepted.length < files.length) {
-      setAttachError("Some files were skipped (not an image, or over 8MB).");
+      setAttachError("Some files were skipped (not an image or PDF, or over 15MB).");
     }
     setAttachments((prev) => [...prev, ...accepted]);
   }
@@ -61,7 +70,15 @@ export function ChatInput({
     const el = textareaRef.current;
     const line = el?.value.trim() ?? "";
     if (!line && attachments.length === 0) return;
-    onSend(line, attachments.length ? attachments.map(({ mediaType, data }) => ({ mediaType, data })) : undefined);
+
+    const images = attachments.filter((a): a is Extract<Attachment, { kind: "image" }> => a.kind === "image");
+    const documents = attachments.filter((a): a is Extract<Attachment, { kind: "document" }> => a.kind === "document");
+    onSend(
+      line,
+      images.length ? images.map(({ mediaType, data }) => ({ mediaType, data })) : undefined,
+      documents.length ? documents.map(({ mediaType, data, filename }) => ({ mediaType, data, filename })) : undefined,
+    );
+
     if (el) el.value = "";
     setAttachments([]);
     setAttachError(null);
@@ -77,19 +94,34 @@ export function ChatInput({
     >
       {attachments.length > 0 && (
         <div className="flex flex-wrap gap-2">
-          {attachments.map((a) => (
-            <div key={a.id} className="relative">
-              <img src={a.previewUrl} alt="attachment preview" className="h-16 w-16 rounded-lg border object-cover" />
-              <button
-                type="button"
-                onClick={() => removeAttachment(a.id)}
-                className="absolute -top-1.5 -right-1.5 flex size-4 items-center justify-center rounded-full bg-foreground text-[10px] text-background"
-                aria-label="Remove attachment"
-              >
-                ×
-              </button>
-            </div>
-          ))}
+          {attachments.map((a) =>
+            a.kind === "image" ? (
+              <div key={a.id} className="relative">
+                <img src={a.previewUrl} alt="attachment preview" className="h-16 w-16 rounded-lg border object-cover" />
+                <button
+                  type="button"
+                  onClick={() => removeAttachment(a.id)}
+                  className="absolute -top-1.5 -right-1.5 flex size-4 items-center justify-center rounded-full bg-foreground text-[10px] text-background"
+                  aria-label="Remove attachment"
+                >
+                  ×
+                </button>
+              </div>
+            ) : (
+              <div key={a.id} className="relative flex h-16 w-24 flex-col items-center justify-center gap-1 rounded-lg border px-1">
+                <span className="text-lg">📄</span>
+                <span className="w-full truncate text-center text-[10px] text-muted-foreground">{a.filename}</span>
+                <button
+                  type="button"
+                  onClick={() => removeAttachment(a.id)}
+                  className="absolute -top-1.5 -right-1.5 flex size-4 items-center justify-center rounded-full bg-foreground text-[10px] text-background"
+                  aria-label="Remove attachment"
+                >
+                  ×
+                </button>
+              </div>
+            ),
+          )}
         </div>
       )}
       {attachError && <p className="text-xs text-destructive">{attachError}</p>}
@@ -98,7 +130,7 @@ export function ChatInput({
         <input
           ref={fileInputRef}
           type="file"
-          accept={ACCEPTED_MEDIA_TYPES.join(",")}
+          accept={ACCEPTED_TYPES.join(",")}
           multiple
           hidden
           onChange={(e) => {
@@ -117,7 +149,7 @@ export function ChatInput({
           ref={textareaRef}
           rows={1}
           disabled={disabled}
-          placeholder="Type your message or /help… (paste an image to attach it)"
+          placeholder="Type your message or /help… (paste an image, or attach an image/PDF)"
           className="max-h-24 resize-none overflow-y-auto"
           onKeyDown={(e) => {
             if (e.key === "Enter" && !e.shiftKey) {

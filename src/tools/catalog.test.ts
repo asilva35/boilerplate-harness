@@ -26,7 +26,7 @@ test("catalogToolNames lists the static tools, every subagent's delegate_<name>,
 
   assert.deepEqual(
     names.sort(),
-    ["bash", "delegate_research", "estimate_scope", "read_file", "recall", "remember", "write_file"].sort(),
+    ["bash", "delegate_research", "estimate_scope", "read_document", "read_file", "recall", "remember", "write_file"].sort(),
   );
 });
 

@@ -8,6 +8,7 @@ import {
   truncate,
   type ClientMessage,
   type DebugEvent,
+  type DocumentAttachment,
   type ImageAttachment,
   type Message,
   type ServerMessage,
@@ -144,6 +145,14 @@ export function useHarnessSocket() {
             for (const img of msg.images ?? []) {
               items.push({ id: nextId(), kind: "image", role: "user", text: "", imageUrl: toDataUrl(img) });
             }
+            // Phase 30: a compact chip, not the extracted text - a PDF's
+            // full content only shows up via `history` once it's actually
+            // in agent.getMessages() (see the ServerMessage doc comment in
+            // protocol.ts). A "mostly visual" PDF's rendered pages already
+            // arrived above, merged into `images`.
+            for (const doc of msg.documents ?? []) {
+              items.push({ id: nextId(), kind: "chip", text: `📄 ${doc.filename}` });
+            }
             setFeed((prev) => [...prev, ...items]);
             break;
           }
@@ -222,11 +231,11 @@ export function useHarnessSocket() {
     };
   }, [nextId, renderHistory]);
 
-  const send = useCallback((line: string, images?: ImageAttachment[]) => {
+  const send = useCallback((line: string, images?: ImageAttachment[], documents?: DocumentAttachment[]) => {
     const trimmed = line.trim();
     const socket = socketRef.current;
-    if ((!trimmed && !images?.length) || !socket || socket.readyState !== WebSocket.OPEN) return;
-    socket.send(JSON.stringify({ type: "input", line: trimmed, images } satisfies ClientMessage));
+    if ((!trimmed && !images?.length && !documents?.length) || !socket || socket.readyState !== WebSocket.OPEN) return;
+    socket.send(JSON.stringify({ type: "input", line: trimmed, images, documents } satisfies ClientMessage));
   }, []);
 
   const respondApproval = useCallback((approved: boolean) => {

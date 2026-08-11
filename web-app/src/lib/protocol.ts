@@ -24,6 +24,25 @@ export interface ImageAttachment {
   data: string;
 }
 
+// Phase 30: a PDF attachment, sent in a ClientMessage's "input.documents" -
+// mediaType is always "application/pdf" for now. Unlike ImageAttachment,
+// the server never echoes the raw bytes back (see DocumentMeta below) -
+// only what the server derived from it (extracted text as a plain "text"
+// Block, or rendered pages merged into the same "images" field
+// ImageAttachment already uses) shows up on the wire again.
+export interface DocumentAttachment {
+  filename: string;
+  mediaType: string;
+  data: string;
+}
+
+// What ServerMessage's "user_text.documents" carries - just enough to
+// render a compact "a PDF was attached" chip live, not the bytes.
+export interface DocumentMeta {
+  filename: string;
+  mediaType: string;
+}
+
 export interface Message {
   role: Role;
   content: Block[];
@@ -43,7 +62,7 @@ export interface DebugEvent {
 
 export type ServerMessage =
   | { type: "history"; messages: Message[] }
-  | { type: "user_text"; text: string; images?: ImageAttachment[] }
+  | { type: "user_text"; text: string; images?: ImageAttachment[]; documents?: DocumentMeta[] }
   | { type: "assistant_text"; text: string }
   | { type: "text_delta"; text: string }
   | { type: "tool_call"; name: string; input: string }
@@ -55,7 +74,7 @@ export type ServerMessage =
   | { type: "command_output"; text: string };
 
 export type ClientMessage =
-  | { type: "input"; line: string; images?: ImageAttachment[] }
+  | { type: "input"; line: string; images?: ImageAttachment[]; documents?: DocumentAttachment[] }
   | { type: "confirm_response"; approved: boolean };
 
 // Mirrors src/session/manager.ts's SessionSummary (Phase 27) - the shape

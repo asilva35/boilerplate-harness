@@ -355,6 +355,9 @@
         case "user_text":
           if (msg.text) addBubble("user", msg.text);
           for (const img of msg.images ?? []) addImage("user", img.mediaType, img.data);
+          // Phase 30: a compact chip, not the extracted text - see the
+          // same reasoning in useHarnessSocket.ts's user_text handler.
+          for (const doc of msg.documents ?? []) addChip(`📄 ${doc.filename}`);
           break;
         case "text_delta":
           if (!currentStreamBubble) currentStreamBubble = addBubble("assistant", "");

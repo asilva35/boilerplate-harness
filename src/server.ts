@@ -32,12 +32,14 @@ import type { Agent } from "./agent.js";
 import { runCommand } from "./commands.js";
 import { config } from "./config.js";
 import { setSink } from "./debug.js";
+import { pdfToBlocks } from "./documents/pdf.js";
 import { ConfigError, reportFatal } from "./errors.js";
 import { harnessConfig, ProfileRegistry } from "./harness-config.js";
 import { toMarkdown } from "./history/export.js";
 import { ChatHistoryStore } from "./history/store.js";
 import { createMemoryStore, finalizeSessions } from "./memory/index.js";
 import { connectMCPServers, loadConfig } from "./mcp/register.js";
+import type { Block } from "./provider/types.js";
 import { createProvider } from "./provider/index.js";
 import { SessionManager, summarizeSession, type Session } from "./session/manager.js";
 import type { ClientMessage, ServerMessage } from "./session/protocol.js";
@@ -346,19 +348,50 @@ async function main() {
 
       if (msg.type === "input") {
         const line = msg.line.trim();
-        // Phase 29: an image with no caption is still a valid send - only
-        // reject the truly empty case (no text, no images). A "/" command
-        // never carries images (runCommand's own `!line.startsWith("/")`
-        // guard already makes an empty `line` a no-op there either way).
+        // Phase 29/30: an image or document with no caption is still a
+        // valid send - only reject the truly empty case. A "/" command
+        // never carries attachments (runCommand's own
+        // `!line.startsWith("/")` guard already makes an empty `line` a
+        // no-op there either way).
         const images = msg.images ?? [];
-        if (!line && images.length === 0) return;
-
-        // Broadcast the text exactly as typed, not just the reply — this
-        // way a second tab sees both what was typed and what the model
-        // answered, whether it's a "/" command or not.
-        broadcastTo(session, { type: "user_text", text: line, images: images.length ? images : undefined });
+        const documents = msg.documents ?? [];
+        if (!line && images.length === 0 && documents.length === 0) return;
 
         void (async () => {
+          // Phase 30: a PDF becomes Blocks (extracted text, or rendered
+          // page images for a "mostly visual" one) before anything is
+          // broadcast or sent - both the live echo and the Agent need the
+          // result, not the raw upload. Rendered page images join the
+          // same `images` array a genuine photo attachment would use, so
+          // a live viewer sees them exactly the same way (see
+          // session/protocol.ts's ServerMessage.user_text doc comment).
+          const documentBlocks: Block[] = [];
+          const documentMeta: { filename: string; mediaType: string }[] = [];
+          const liveImages = [...images];
+          for (const doc of documents) {
+            if (doc.mediaType !== "application/pdf") continue; // fail closed - same allowlist spirit as ChatInput's image mediaType check
+            try {
+              const { blocks, mode } = await pdfToBlocks(Buffer.from(doc.data, "base64"), doc.filename);
+              documentBlocks.push(...blocks);
+              documentMeta.push({ filename: doc.filename, mediaType: doc.mediaType });
+              if (mode === "images") {
+                for (const b of blocks) if (b.type === "image") liveImages.push({ mediaType: b.mediaType, data: b.data });
+              }
+            } catch (err) {
+              broadcastTo(session, { type: "command_output", text: `document "${doc.filename}": ${(err as Error).message}` });
+            }
+          }
+
+          // Broadcast the text exactly as typed, not just the reply — this
+          // way a second tab sees both what was typed and what the model
+          // answered, whether it's a "/" command or not.
+          broadcastTo(session, {
+            type: "user_text",
+            text: line,
+            images: liveImages.length ? liveImages : undefined,
+            documents: documentMeta.length ? documentMeta : undefined,
+          });
+
           if (
             await runCommand(line, {
               agent: session.agent,
@@ -375,7 +408,8 @@ async function main() {
 
           broadcastTo(session, { type: "mode", mode: "thinking" });
           try {
-            await session.agent.send(line, images);
+            const imageBlocks: Block[] = images.map((img) => ({ type: "image", mediaType: img.mediaType, data: img.data }));
+            await session.agent.send(line, [...imageBlocks, ...documentBlocks]);
           } catch (err) {
             broadcastTo(session, { type: "error", message: (err as Error).message });
           } finally {

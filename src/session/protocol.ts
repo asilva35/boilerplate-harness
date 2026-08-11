@@ -17,7 +17,19 @@ export type ServerMessage =
   // tab sees the same attachment - not just the id/name of some server-
   // side file, since there isn't one (nothing is written to disk until
   // Phase 28's chat-history archive picks it up from agent.getMessages()).
-  | { type: "user_text"; text: string; images?: { mediaType: string; data: string }[] }
+  // Phase 30: a PDF's rendered pages (if it turned out to be "mostly
+  // visual") are merged into this same `images` array server-side - live
+  // viewers see them exactly like a genuine photo attachment. `documents`
+  // is metadata only (filename/mediaType, no bytes) for a compact "a PDF
+  // was attached" chip - the extracted text itself isn't re-broadcast live
+  // (it can be the whole document), only reflected in `history` once it's
+  // actually in agent.getMessages().
+  | {
+      type: "user_text";
+      text: string;
+      images?: { mediaType: string; data: string }[];
+      documents?: { filename: string; mediaType: string }[];
+    }
   | { type: "assistant_text"; text: string }
   | { type: "text_delta"; text: string }
   | { type: "tool_call"; name: string; input: string }
@@ -31,9 +43,15 @@ export type ServerMessage =
 // Messages client → server. `input` covers both normal messages and "/"
 // commands - the server dispatches them the same way index.ts does
 // (runCommand first, agent.send if it wasn't a command). `images` (Phase
-// 29) is optional and only ever meaningful for a non-command `line` - a
-// "/" command ignores it, same as it already ignores everything but the
-// text.
+// 29) and `documents` (Phase 30, PDFs only - mediaType is always
+// "application/pdf") are optional and only ever meaningful for a
+// non-command `line` - a "/" command ignores both, same as it already
+// ignores everything but the text.
 export type ClientMessage =
-  | { type: "input"; line: string; images?: { mediaType: string; data: string }[] }
+  | {
+      type: "input";
+      line: string;
+      images?: { mediaType: string; data: string }[];
+      documents?: { filename: string; mediaType: string; data: string }[];
+    }
   | { type: "confirm_response"; approved: boolean };
