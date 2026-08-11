@@ -16,6 +16,8 @@ import { SkillRegistry } from "./skills/registry.js";
 import { registerCatalogTools, refreshSubagentTools } from "./tools/catalog.js";
 import { ToolRegistry } from "./tools/registry.js";
 import { App } from "./ui/App.js";
+import { bannerText } from "./ui/banner.js";
+import { dim, red, yellow } from "./ui/styles.js";
 
 async function main() {
   const provider = createProvider();
@@ -57,13 +59,19 @@ async function main() {
     tools,
     systemPrompt,
     compactor: buildCompactor(harnessConfig.compaction, provider),
-    onToolCall: (name, rawInput) => console.log(`[tool] ${name} ${rawInput}`),
+    onToolCall: (name, rawInput) => console.log(dim(`[tool] ${name} ${rawInput}`)),
     onAssistantText: (text) => {
       console.log(text);
       streamResetBridge();
     },
     onTextDelta: (chunk) => textDeltaBridge(chunk),
-    onRiskFlag: (name, risk, next) => console.log(`  ⚠ [${name}] risk: ${risk}${next ? ` — next: ${next}` : ""}`),
+    // Phase 33: colored by severity - matches the amber/red split the web
+    // UI's risk chip already uses (Phase 18), so the same signal reads
+    // consistently across both surfaces.
+    onRiskFlag: (name, risk, next) => {
+      const color = risk === "high" ? red : yellow;
+      console.log(color(`  ⚠ [${name}] risk: ${risk}${next ? ` — next: ${next}` : ""}`));
+    },
     confirm: (name, rawInput) => confirmBridge(name, rawInput),
   });
 
@@ -84,9 +92,7 @@ async function main() {
     return newProvider;
   }
 
-  console.log(`boilerplate-harness — model: ${provider.model}`);
-  console.log(`tools: ${tools.definitions().map((t) => t.name).join(", ")}`);
-  console.log("Type your message and press Enter, or /help for commands. Ctrl+D or /exit to quit.\n");
+  console.log(bannerText(provider.kind, provider.model, tools.definitions().map((t) => t.name)));
 
   const { waitUntilExit } = render(
     <App

@@ -26,6 +26,7 @@ import { restoreLatest } from "../backup/store.js";
 import { runCommand } from "../commands.js";
 import type { Provider } from "../provider/types.js";
 import { buildWriteDiff } from "../tools/diff.js";
+import { highlightDiff } from "./highlight.js";
 import { InputLine } from "./InputLine.js";
 import { Spinner } from "./Spinner.js";
 
@@ -97,7 +98,10 @@ export function App({ agent, registerConfirm, registerTextDelta, registerStreamR
         new Promise<boolean>((resolve) => {
           const diff = name === "write_file" ? buildWriteDiff(rawInput) : "";
           if (diff) {
-            console.log(diff);
+            // Phase 33: syntax-highlighted, same diff text buildWriteDiff
+            // already produces for the other two entry points - only this
+            // one (the Ink TUI) is in scope for color per the guide.
+            console.log(highlightDiff(diff));
             console.log("  approve this write? [y/N]");
           } else {
             console.log(`  approve "${name}" ${rawInput}? [y/N]`);
