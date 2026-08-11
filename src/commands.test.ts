@@ -21,10 +21,17 @@ beforeEach(() => {
 // tests can assert agent.provider actually changed. Tests that care about
 // the exact call args capture them via the returned `switches` array
 // instead of overriding this default.
-function loggingContext(agent: Agent) {
+//
+// Phase 31: `rollbackAvailable` seeds which paths a fake `ctx.rollback`
+// reports finding a backup for - defaults to none, so /rollback tests opt
+// in explicitly rather than relying on the real backupStore singleton
+// (backup/store.ts is its own dedicated test suite; this file only needs
+// to verify cmdRollback's own message-formatting logic).
+function loggingContext(agent: Agent, rollbackAvailable: Set<string> = new Set()) {
   const logs: string[] = [];
   let refreshCount = 0;
   const switches: { name: string; model?: string }[] = [];
+  const rollbacks: string[] = [];
   return {
     ctx: {
       agent,
@@ -37,10 +44,15 @@ function loggingContext(agent: Agent) {
         agent.provider = provider;
         return provider;
       },
+      rollback: async (path: string): Promise<boolean> => {
+        rollbacks.push(path);
+        return rollbackAvailable.has(path);
+      },
     } as CommandContext,
     logs,
     refreshCount: () => refreshCount,
     switches,
+    rollbacks,
   };
 }
 
@@ -414,4 +426,33 @@ test("/debug with an unrecognized verb reports itself and doesn't change state",
 
   assert.equal(isDebugEnabled(), false);
   assert.deepEqual(logs, ["unknown value: bogus (try on/off/clear/ls/show)"]);
+});
+
+test("/rollback with no path shows usage and never calls ctx.rollback", async () => {
+  const agent = new Agent({ provider: new MockProvider([]), tools: new ToolRegistry() });
+  const { ctx, logs, rollbacks } = loggingContext(agent);
+
+  await runCommand("/rollback", ctx);
+
+  assert.deepEqual(logs, ["usage: /rollback <path>"]);
+  assert.deepEqual(rollbacks, []);
+});
+
+test("/rollback <path> restores and reports success when ctx.rollback finds a backup", async () => {
+  const agent = new Agent({ provider: new MockProvider([]), tools: new ToolRegistry() });
+  const { ctx, logs, rollbacks } = loggingContext(agent, new Set(["src/foo.ts"]));
+
+  await runCommand("/rollback src/foo.ts", ctx);
+
+  assert.deepEqual(rollbacks, ["src/foo.ts"]);
+  assert.deepEqual(logs, ["restored src/foo.ts from its most recent backup"]);
+});
+
+test("/rollback <path> reports no backup found, distinct from a restored message", async () => {
+  const agent = new Agent({ provider: new MockProvider([]), tools: new ToolRegistry() });
+  const { ctx, logs } = loggingContext(agent); // rollbackAvailable defaults to empty
+
+  await runCommand("/rollback src/never-written.ts", ctx);
+
+  assert.match(logs[0], /no backup found for src\/never-written\.ts/);
 });

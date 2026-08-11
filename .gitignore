@@ -8,3 +8,6 @@ mcp.json
 
 # Saved chat history (Phase 28) - user/session-specific, never committed.
 .harness/chats/
+
+# write_file backups (Phase 31) - runtime safety net, never committed.
+.harness/backups/

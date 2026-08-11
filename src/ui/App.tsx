@@ -22,6 +22,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Box, Text, useApp, useInput } from "ink";
 import type { Agent } from "../agent.js";
+import { restoreLatest } from "../backup/store.js";
 import { runCommand } from "../commands.js";
 import type { Provider } from "../provider/types.js";
 import { buildWriteDiff } from "../tools/diff.js";
@@ -112,7 +113,7 @@ export function App({ agent, registerConfirm, registerTextDelta, registerStreamR
       setHistory((h) => [...h, line]);
       console.log(`> ${line}`);
 
-      if (await runCommand(line, { agent, log: console.log, switchProvider })) {
+      if (await runCommand(line, { agent, log: console.log, switchProvider, rollback: restoreLatest })) {
         console.log();
         return;
       }

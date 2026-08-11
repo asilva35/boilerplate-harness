@@ -41,6 +41,13 @@ export interface CommandContext {
   // and tui.tsx are always exactly one Agent, so they simply omit this
   // and /stats falls back to the same single-session output as /tokens.
   listSessions?: () => SessionSummary[];
+  // Phase 31: restores the most recent write_file (Phase 3) backup for a
+  // path, returning whether one was found. Unlike switchProvider above,
+  // there's nothing entry-point-specific about this - every real entry
+  // point passes the exact same restoreLatest (backup/store.ts), a
+  // process-wide singleton like debug.ts's ring buffer - so it's required
+  // here rather than optional.
+  rollback: (path: string) => Promise<boolean>;
 }
 
 type CommandHandler = (args: string, ctx: CommandContext) => void | Promise<void>;
@@ -71,6 +78,11 @@ const commands: Record<string, Command> = {
     description: "control the debug event log (toggle / inspect entries)",
     usage: "/debug [on|off|clear|ls|show [id]]",
     run: cmdDebug,
+  },
+  rollback: {
+    description: "restore the most recent write_file backup for a path",
+    usage: "/rollback <path>",
+    run: cmdRollback,
   },
   exit: { description: "exit the harness", run: cmdExit },
 };
@@ -325,6 +337,20 @@ function cmdDebugShow(idStr: string, ctx: CommandContext): void {
 function formatEventTime(d: Date): string {
   const pad = (n: number, len = 2) => String(n).padStart(len, "0");
   return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}.${pad(d.getMilliseconds(), 3)}`;
+}
+
+async function cmdRollback(args: string, ctx: CommandContext): Promise<void> {
+  const targetPath = args.trim();
+  if (!targetPath) {
+    ctx.log("usage: /rollback <path>");
+    return;
+  }
+  const restored = await ctx.rollback(targetPath);
+  ctx.log(
+    restored
+      ? `restored ${targetPath} from its most recent backup`
+      : `no backup found for ${targetPath} - write_file only backs up a file it's about to overwrite, not a brand-new one`,
+  );
 }
 
 // Same as cmdExit in Go (direct os.Exit(0), without propagating the signal

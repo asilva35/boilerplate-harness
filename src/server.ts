@@ -29,6 +29,7 @@ import { fileURLToPath } from "node:url";
 import path from "node:path";
 import { WebSocketServer, type WebSocket } from "ws";
 import type { Agent } from "./agent.js";
+import { restoreLatest } from "./backup/store.js";
 import { runCommand } from "./commands.js";
 import { config } from "./config.js";
 import { setSink } from "./debug.js";
@@ -402,6 +403,7 @@ async function main() {
               // just this one - /stats here is an overview, "my own
               // numbers" is still what /tokens is for.
               listSessions: () => sessionManager.all().map(summarizeSession),
+              rollback: restoreLatest,
             })
           )
             return;

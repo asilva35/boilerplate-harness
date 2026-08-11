@@ -6,6 +6,7 @@
 import * as readline from "node:readline/promises";
 import { stdin, stdout } from "node:process";
 import { Agent } from "./agent.js";
+import { restoreLatest } from "./backup/store.js";
 import { runCommand } from "./commands.js";
 import { buildCompactor } from "./context/compactor.js";
 import { buildWriteDiff } from "./tools/diff.js";
@@ -123,7 +124,7 @@ async function main() {
     }
     if (!input.trim()) continue;
 
-    if (await runCommand(input, { agent, log: console.log, switchProvider })) {
+    if (await runCommand(input, { agent, log: console.log, switchProvider, rollback: restoreLatest })) {
       console.log();
       continue;
     }

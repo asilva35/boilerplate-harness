@@ -509,6 +509,19 @@ Try it: click the 📎 button (or paste a screenshot) in the chat, ask "what's i
 
 Try it: attach a short PDF (report, contract, floor plan) via 📎, and ask for a summary of what's in it.
 
+## Phase 31: Backup and Rollback on Failures
+
+**Key concept:** if `write_file`/`bash` do something unwanted - approved by you, but with consequences you didn't foresee - there was no safety net after the fact. No Go module to migrate: another feature with nothing to port from `internal/`.
+
+- `backup/store.ts` (new): `BackupStore`, a flat, process-wide archive under `.harness/backups/` - not session-scoped, same reasoning as `debug.ts`'s ring buffer (Phase 19): a write from any session's `write_file` call is equally worth protecting, and there's exactly one filesystem underneath every session anyway. Filenames are `"<Date.now()>-<encodeURIComponent(path.resolve(targetPath))>"`, flat (no nested directories) - `encodeURIComponent` guarantees no `/` (or `..`) survives into the filename, so a backup can't be written outside `root` the way a raw `path.join` with an untrusted path could (cheap to keep honest even though `targetPath` is already trusted here - `write_file` requires approval before any of this runs). `path.resolve` first so `"src/foo.ts"` and `"./src/foo.ts"` - the same file, spelled differently - back up and roll back as the same entry. `latest()` finds the most recent backup for a path by sorting filenames as plain strings, which works because `Date.now()`'s fixed digit width keeps lexicographic order equal to chronological order.
+- `tools/write_file.ts`: before overwriting, reads whatever's currently at the target and snapshots it via `backupStore.save()` - but only when the file already exists (nothing to restore to for a brand-new one) and the content is actually changing (an identical rewrite has nothing worth saving either - the same "no changes" case `buildWriteDiff`, Phase 11, already special-cases in the approval prompt, checked directly here with a plain string comparison rather than re-parsing that function's formatted diff output just to throw it away). Best-effort: any failure reading the existing file just skips the backup instead of blocking the write itself.
+- `commands.ts`: new `/rollback <path>` command, restoring the most recent backup for that path and reporting whether one was found. `CommandContext` gains a **required** `rollback: (path: string) => Promise<boolean>` (unlike `switchProvider`, which every entry point reimplements slightly differently, there's nothing entry-point-specific about restoring a file - `backup/store.ts` exports one shared `restoreLatest()` function that every entry point passes as-is, not three near-identical closures).
+- All three entry points (`index.ts`, `App.tsx`/`tui.tsx`, `server.ts`) wire `rollback: restoreLatest` into their `runCommand()` call - a one-line addition each, since `restoreLatest` needs no per-instance state to close over.
+
+**Verified for real, not just typechecked:** 237 backend tests (13 new: 7 for `BackupStore` including the path-traversal-shaped-target case, 3 for `write_file.ts`'s backup-or-skip logic, 3 for `/rollback`'s message formatting). Live smoke test against the real server through OpenRouter: created a real file with known content, asked the agent to overwrite it via `write_file` (approved through a real `confirm_request`/`confirm_response` round trip) - confirmed the backup landed and the file now held the new content - then ran `/rollback <path>` as a real user command and confirmed the file's content reverted to exactly the original, byte for byte. Also confirmed `/rollback` on a path that was never written reports "no backup found" cleanly instead of crashing.
+
+Try it: ask the agent to overwrite a file via `write_file`, approve it, then run `/rollback <path>` and confirm the file is back to what it was.
+
 More phases land here as the project grows — see the commit history for the full progression.
 
 ## License
