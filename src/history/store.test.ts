@@ -122,6 +122,22 @@ test("update(): rename/pin also lands in the on-disk record, not just the index"
   });
 });
 
+test("update(): a pin-only change (title omitted) doesn't clobber the existing title to undefined", async () => {
+  await withStore(async (store) => {
+    await store.upsert({ id: "sess-1", userId: "local", role: "admin", profile: "default", messages: [userText("hi")] });
+    await store.update("sess-1", { title: "Keep me" });
+
+    // Mirrors server.ts's PATCH route, which always passes both keys but
+    // sets the untouched one to `undefined` rather than omitting it -
+    // {...summary, ...changes} would silently wipe title here.
+    const updated = await store.update("sess-1", { title: undefined, pinned: true });
+
+    assert.equal(updated.title, "Keep me");
+    assert.equal(updated.pinned, true);
+    assert.equal((await store.get("sess-1"))?.title, "Keep me");
+  });
+});
+
 test("open(): a fresh store re-reads a previously flushed index.json - survives a restart", async () => {
   await withStore(async (_store, root) => {
     const first = await ChatHistoryStore.open(root);

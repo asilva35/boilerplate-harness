@@ -9,7 +9,20 @@ export type Role = "user" | "assistant";
 export type Block =
   | { type: "text"; text: string }
   | { type: "tool_use"; toolUseId: string; toolName: string; toolInput: string }
-  | { type: "tool_result"; toolUseId: string; toolResult: string; isError: boolean };
+  | { type: "tool_result"; toolUseId: string; toolResult: string; isError: boolean }
+  // Phase 29: data is raw base64, no "data:<mediaType>;base64," prefix -
+  // callers that need a renderable <img src> build that themselves (see
+  // useHarnessSocket.ts).
+  | { type: "image"; mediaType: string; data: string };
+
+// A single image attachment, sent in a ClientMessage's "input.images" and
+// echoed back in a ServerMessage's "user_text.images" - same shape as
+// Block's "image" variant minus the discriminant, since neither the input
+// form nor the echo needs it.
+export interface ImageAttachment {
+  mediaType: string;
+  data: string;
+}
 
 export interface Message {
   role: Role;
@@ -30,7 +43,7 @@ export interface DebugEvent {
 
 export type ServerMessage =
   | { type: "history"; messages: Message[] }
-  | { type: "user_text"; text: string }
+  | { type: "user_text"; text: string; images?: ImageAttachment[] }
   | { type: "assistant_text"; text: string }
   | { type: "text_delta"; text: string }
   | { type: "tool_call"; name: string; input: string }
@@ -41,7 +54,9 @@ export type ServerMessage =
   | { type: "error"; message: string }
   | { type: "command_output"; text: string };
 
-export type ClientMessage = { type: "input"; line: string } | { type: "confirm_response"; approved: boolean };
+export type ClientMessage =
+  | { type: "input"; line: string; images?: ImageAttachment[] }
+  | { type: "confirm_response"; approved: boolean };
 
 // Mirrors src/session/manager.ts's SessionSummary (Phase 27) - the shape
 // GET /api/sessions returns, one entry per session the server process

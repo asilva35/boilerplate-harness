@@ -13,6 +13,8 @@ export function summarizeBlock(b: Block): string {
       return `[tool_use ${b.toolName}]`;
     case "tool_result":
       return `[tool_result ${b.isError ? "error" : "ok"}]`;
+    case "image":
+      return `[image ${b.mediaType}]`;
   }
 }
 

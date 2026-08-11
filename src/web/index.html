@@ -223,6 +223,25 @@
     return bubble;
   }
 
+  // Phase 29: view-only here - this client never gained an attach-image
+  // input (that landed only in the Phase 10 React client, per the guide),
+  // but it still needs to render an image block gracefully when a session
+  // was fed one from that other client, instead of just silently dropping
+  // it the way an unhandled block type otherwise would.
+  function addImage(role, mediaType, data) {
+    const row = document.createElement("div");
+    row.className = "row " + role;
+    const img = document.createElement("img");
+    img.src = `data:${mediaType};base64,${data}`;
+    img.alt = "attached image";
+    img.style.maxWidth = "70%";
+    img.style.maxHeight = "16rem";
+    img.style.borderRadius = "1rem";
+    row.appendChild(img);
+    chat.appendChild(row);
+    scrollToBottom();
+  }
+
   function addChip(text) {
     const chip = document.createElement("div");
     chip.className = "chip";
@@ -272,6 +291,8 @@
           addChip(`🔧 ${block.toolName} ${truncate(block.toolInput, 200)}`);
         } else if (block.type === "tool_result") {
           addChip(`${block.isError ? "✗" : "✓"} ${truncate(block.toolResult, 200)}`);
+        } else if (block.type === "image") {
+          addImage(m.role, block.mediaType, block.data);
         }
       }
     }
@@ -332,7 +353,8 @@
           setMode("idle");
           break;
         case "user_text":
-          addBubble("user", msg.text);
+          if (msg.text) addBubble("user", msg.text);
+          for (const img of msg.images ?? []) addImage("user", img.mediaType, img.data);
           break;
         case "text_delta":
           if (!currentStreamBubble) currentStreamBubble = addBubble("assistant", "");

@@ -210,13 +210,27 @@ function toOpenAIMessages(messages: Message[]): OpenAI.ChatCompletionMessagePara
       continue;
     }
 
-    // role "user": the text goes in a user message; each tool_result is
-    // flattened into its own independent "tool" message.
+    // role "user": text and images (Phase 29) go in a single user message;
+    // each tool_result is flattened into its own independent "tool"
+    // message. Only build the array content form when there's an image to
+    // carry - a plain string keeps every pre-Phase-29 request byte-for-byte
+    // identical to before.
     const text = m.content
       .filter((b): b is Extract<Block, { type: "text" }> => b.type === "text")
       .map((b) => b.text)
       .join("");
-    if (text) out.push({ role: "user", content: text });
+    const images = m.content.filter((b): b is Extract<Block, { type: "image" }> => b.type === "image");
+
+    if (images.length > 0) {
+      const parts: OpenAI.ChatCompletionContentPart[] = [];
+      if (text) parts.push({ type: "text", text });
+      for (const img of images) {
+        parts.push({ type: "image_url", image_url: { url: `data:${img.mediaType};base64,${img.data}` } });
+      }
+      out.push({ role: "user", content: parts });
+    } else if (text) {
+      out.push({ role: "user", content: text });
+    }
 
     for (const b of m.content) {
       if (b.type === "tool_result") {

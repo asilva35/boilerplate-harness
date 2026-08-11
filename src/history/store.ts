@@ -122,14 +122,25 @@ export class ChatHistoryStore {
     const summary = this.index.get(id);
     if (!summary) throw new ConfigError(`no saved chat with id "${id}"`);
 
-    const updated: ChatSummary = { ...summary, ...changes };
+    // `{ ...summary, ...changes }` would be wrong here: PATCH /api/chats/:id
+    // passes {title: undefined} for a pin-only request (see server.ts), and
+    // spreading an object with an explicit `undefined` value overwrites the
+    // existing field instead of leaving it alone - only apply a change
+    // that's actually present.
+    const updated: ChatSummary = {
+      ...summary,
+      ...(changes.title !== undefined ? { title: changes.title } : {}),
+      ...(changes.pinned !== undefined ? { pinned: changes.pinned } : {}),
+    };
     this.index.set(id, updated);
     await this.flushIndex();
 
     // Keep the full record file in sync too, so a later export reflects
     // the rename/pin instead of the title/flag it had when last saved.
     const record = await this.get(id);
-    if (record) await writeFile(this.recordPath(id), JSON.stringify({ ...record, ...changes }, null, 2), "utf-8");
+    if (record) {
+      await writeFile(this.recordPath(id), JSON.stringify({ ...record, title: updated.title, pinned: updated.pinned }, null, 2), "utf-8");
+    }
 
     return updated;
   }

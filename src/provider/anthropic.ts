@@ -147,7 +147,7 @@ function toAnthropicMessage(m: Message): Anthropic.MessageParam {
 
 function toAnthropicBlock(
   b: Block,
-): Anthropic.TextBlockParam | Anthropic.ToolUseBlockParam | Anthropic.ToolResultBlockParam {
+): Anthropic.TextBlockParam | Anthropic.ToolUseBlockParam | Anthropic.ToolResultBlockParam | Anthropic.ImageBlockParam {
   switch (b.type) {
     case "text":
       return { type: "text", text: b.text };
@@ -155,6 +155,15 @@ function toAnthropicBlock(
       return { type: "tool_use", id: b.toolUseId, name: b.toolName, input: JSON.parse(b.toolInput) };
     case "tool_result":
       return { type: "tool_result", tool_use_id: b.toolUseId, content: b.toolResult, is_error: b.isError };
+    case "image":
+      // media_type is a fixed literal union on the SDK's side (jpeg/png/
+      // gif/webp) - our own Block keeps it a plain string since that's
+      // already validated once, client-side, when the image is attached
+      // (see web-app's fileToImageAttachment).
+      return {
+        type: "image",
+        source: { type: "base64", media_type: b.mediaType as Anthropic.ImageBlockParam.Source["media_type"], data: b.data },
+      };
   }
 }
 

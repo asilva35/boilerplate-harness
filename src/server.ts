@@ -346,12 +346,17 @@ async function main() {
 
       if (msg.type === "input") {
         const line = msg.line.trim();
-        if (!line) return;
+        // Phase 29: an image with no caption is still a valid send - only
+        // reject the truly empty case (no text, no images). A "/" command
+        // never carries images (runCommand's own `!line.startsWith("/")`
+        // guard already makes an empty `line` a no-op there either way).
+        const images = msg.images ?? [];
+        if (!line && images.length === 0) return;
 
         // Broadcast the text exactly as typed, not just the reply — this
         // way a second tab sees both what was typed and what the model
         // answered, whether it's a "/" command or not.
-        broadcastTo(session, { type: "user_text", text: line });
+        broadcastTo(session, { type: "user_text", text: line, images: images.length ? images : undefined });
 
         void (async () => {
           if (
@@ -370,7 +375,7 @@ async function main() {
 
           broadcastTo(session, { type: "mode", mode: "thinking" });
           try {
-            await session.agent.send(line);
+            await session.agent.send(line, images);
           } catch (err) {
             broadcastTo(session, { type: "error", message: (err as Error).message });
           } finally {

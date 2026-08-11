@@ -45,6 +45,18 @@ function FeedRow({ item }: { item: FeedItem }) {
     );
   }
 
+  if (item.kind === "image") {
+    return (
+      <div className={cn("flex", item.role === "user" && "justify-end")}>
+        <img
+          src={item.imageUrl}
+          alt="attached"
+          className="max-h-64 max-w-[70%] rounded-2xl border object-contain"
+        />
+      </div>
+    );
+  }
+
   if (item.kind === "chip") {
     return (
       <div className="w-fit max-w-[85%] self-start rounded-lg bg-amber-100 px-2.5 py-1.5 font-mono text-xs break-words text-amber-900 dark:bg-amber-950 dark:text-amber-300">

@@ -30,5 +30,11 @@ function blockToMarkdown(block: Block): string {
       return `\`\`\`\n[tool call] ${block.toolName}\n${block.toolInput}\n\`\`\``;
     case "tool_result":
       return `\`\`\`\n[tool result${block.isError ? " - error" : ""}]\n${block.toolResult}\n\`\`\``;
+    case "image":
+      // Embedded as a data URI, not linked out to some external path - the
+      // whole point of this export (per the guide) is a self-contained
+      // record a third party can open and see exactly what happened,
+      // including what was actually shown to the model.
+      return `![attached image](data:${block.mediaType};base64,${block.data})`;
   }
 }

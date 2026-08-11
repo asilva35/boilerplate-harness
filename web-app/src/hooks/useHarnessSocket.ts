@@ -4,7 +4,14 @@
 // same doubling backoff (capped at 10s) on close.
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { truncate, type ClientMessage, type DebugEvent, type Message, type ServerMessage } from "@/lib/protocol";
+import {
+  truncate,
+  type ClientMessage,
+  type DebugEvent,
+  type ImageAttachment,
+  type Message,
+  type ServerMessage,
+} from "@/lib/protocol";
 
 // Mirrors src/debug.ts's own RING_CAPACITY - no point keeping more client-
 // side than the server itself would ever have live at once.
@@ -15,12 +22,20 @@ export type Mode = "idle" | "thinking" | "approval";
 
 export interface FeedItem {
   id: number;
-  kind: "bubble" | "chip" | "error" | "command" | "risk";
+  kind: "bubble" | "chip" | "error" | "command" | "risk" | "image";
   role?: "user" | "assistant";
   text: string;
   // Only set for kind "risk" - styling varies by severity ("high" reads
   // more urgent than "low"), unlike every other kind which has one look.
   level?: "low" | "high";
+  // Only set for kind "image" - a ready-to-render data: URI (mediaType +
+  // base64 data joined together), built once here rather than in every
+  // renderer that needs one.
+  imageUrl?: string;
+}
+
+function toDataUrl(img: ImageAttachment): string {
+  return `data:${img.mediaType};base64,${img.data}`;
 }
 
 export interface PendingApproval {
@@ -68,6 +83,8 @@ export function useHarnessSocket() {
               kind: "chip",
               text: `${block.isError ? "✗" : "✓"} ${truncate(block.toolResult, 200)}`,
             });
+          } else if (block.type === "image") {
+            items.push({ id: nextId(), kind: "image", role: m.role, text: "", imageUrl: toDataUrl(block) });
           }
         }
       }
@@ -121,9 +138,15 @@ export function useHarnessSocket() {
             renderHistory(msg.messages);
             setMode("idle");
             break;
-          case "user_text":
-            setFeed((prev) => [...prev, { id: nextId(), kind: "bubble", role: "user", text: msg.text }]);
+          case "user_text": {
+            const items: FeedItem[] = [];
+            if (msg.text) items.push({ id: nextId(), kind: "bubble", role: "user", text: msg.text });
+            for (const img of msg.images ?? []) {
+              items.push({ id: nextId(), kind: "image", role: "user", text: "", imageUrl: toDataUrl(img) });
+            }
+            setFeed((prev) => [...prev, ...items]);
             break;
+          }
           case "text_delta":
             setFeed((prev) => {
               if (streamingIdRef.current === null) {
@@ -199,11 +222,11 @@ export function useHarnessSocket() {
     };
   }, [nextId, renderHistory]);
 
-  const send = useCallback((line: string) => {
+  const send = useCallback((line: string, images?: ImageAttachment[]) => {
     const trimmed = line.trim();
     const socket = socketRef.current;
-    if (!trimmed || !socket || socket.readyState !== WebSocket.OPEN) return;
-    socket.send(JSON.stringify({ type: "input", line: trimmed } satisfies ClientMessage));
+    if ((!trimmed && !images?.length) || !socket || socket.readyState !== WebSocket.OPEN) return;
+    socket.send(JSON.stringify({ type: "input", line: trimmed, images } satisfies ClientMessage));
   }, []);
 
   const respondApproval = useCallback((approved: boolean) => {

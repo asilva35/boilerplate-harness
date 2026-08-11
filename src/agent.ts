@@ -86,8 +86,17 @@ export class Agent {
     this.messages = [];
   }
 
-  async send(prompt: string): Promise<string> {
-    this.messages.push({ role: "user", content: [{ type: "text", text: prompt }] });
+  // Phase 29: images are optional and additive - every existing caller
+  // (index.ts, tui.tsx, ResearchSubagent) passes none and gets the exact
+  // pre-Phase-29 single text block. An empty `prompt` is only valid when
+  // at least one image is attached (the "image with no caption" case);
+  // callers still guard against a genuinely empty send (no text, no
+  // images) before reaching here - see server.ts's socket handler.
+  async send(prompt: string, images: { mediaType: string; data: string }[] = []): Promise<string> {
+    const content: Block[] = [];
+    if (prompt) content.push({ type: "text", text: prompt });
+    for (const img of images) content.push({ type: "image", mediaType: img.mediaType, data: img.data });
+    this.messages.push({ role: "user", content });
     return this.loop();
   }
 

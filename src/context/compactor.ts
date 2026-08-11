@@ -24,7 +24,12 @@ export function estimateTokens(messages: Message[]): number {
     for (const b of m.content) {
       if (b.type === "text") chars += b.text.length;
       else if (b.type === "tool_use") chars += b.toolName.length + b.toolInput.length;
-      else chars += b.toolResult.length;
+      else if (b.type === "tool_result") chars += b.toolResult.length;
+      // Phase 29: an attached image's base64 payload is real context the
+      // model actually pays for, so it counts toward the threshold too -
+      // unlike renderTranscript() below, where the raw bytes would just
+      // bloat the summarization prompt for no benefit.
+      else chars += b.data.length;
     }
   }
   return Math.ceil(chars / 4);
@@ -58,7 +63,14 @@ export function renderTranscript(messages: Message[]): string {
     for (const b of m.content) {
       if (b.type === "text") out += b.text;
       else if (b.type === "tool_use") out += `[called ${b.toolName} with ${b.toolInput}]`;
-      else out += `[tool result: ${b.toolResult}]`;
+      else if (b.type === "tool_result") out += `[tool result: ${b.toolResult}]`;
+      // A placeholder, not the base64 payload - this feeds the Summarize
+      // strategy's own request to the model, and dumping a whole image's
+      // bytes into a "summarize this conversation" prompt would bloat that
+      // call for no benefit (the model can't usefully act on the
+      // placeholder text either way, since the actual image is gone once
+      // this message gets compacted away).
+      else out += `[image attached: ${b.mediaType}]`;
       out += "\n";
     }
   }

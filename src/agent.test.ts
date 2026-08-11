@@ -50,6 +50,28 @@ test("returns plain text when the model makes no tool calls", async () => {
   assert.equal(result, "hello there");
 });
 
+test("send() with images appends an image block per attachment, after the text block", async () => {
+  const provider = new MockProvider([{ content: [{ type: "text", text: "I see a cat" }], stopReason: "end_turn" }]);
+  const agent = new Agent({ provider, tools: registryWith() });
+
+  await agent.send("what's in this photo?", [{ mediaType: "image/png", data: "base64data" }]);
+
+  const sent = provider.calls[0].messages[0].content;
+  assert.deepEqual(sent, [
+    { type: "text", text: "what's in this photo?" },
+    { type: "image", mediaType: "image/png", data: "base64data" },
+  ]);
+});
+
+test("send() with an empty prompt but images attached sends just the image block, no empty text block", async () => {
+  const provider = new MockProvider([{ content: [{ type: "text", text: "a cat" }], stopReason: "end_turn" }]);
+  const agent = new Agent({ provider, tools: registryWith() });
+
+  await agent.send("", [{ mediaType: "image/png", data: "base64data" }]);
+
+  assert.deepEqual(provider.calls[0].messages[0].content, [{ type: "image", mediaType: "image/png", data: "base64data" }]);
+});
+
 test("executes a tool call and feeds the result back to the provider", async () => {
   const provider = new MockProvider([
     {

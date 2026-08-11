@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { NoCompaction, SlidingWindow, Summarize, estimateTokens, safeSplitPoint } from "./compactor.js";
+import { NoCompaction, SlidingWindow, Summarize, estimateTokens, renderTranscript, safeSplitPoint } from "./compactor.js";
 import { MockProvider } from "../provider/mock.js";
 import type { Message } from "../provider/types.js";
 
@@ -107,4 +107,21 @@ test("estimateTokens grows with message content length", () => {
   const short = estimateTokens([userText("hi")]);
   const long = estimateTokens([userText("hi".repeat(1000))]);
   assert.ok(long > short);
+});
+
+test("estimateTokens counts an attached image's base64 payload, not just text/tool blocks", () => {
+  const withoutImage = estimateTokens([userText("look at this")]);
+  const withImage = estimateTokens([
+    { role: "user", content: [{ type: "text", text: "look at this" }, { type: "image", mediaType: "image/png", data: "a".repeat(1000) }] },
+  ]);
+  assert.ok(withImage > withoutImage + 200); // ~1000 chars / 4 ≈ 250 extra tokens
+});
+
+test("renderTranscript shows a placeholder for an image block, not the raw base64 payload", () => {
+  const messages: Message[] = [
+    { role: "user", content: [{ type: "image", mediaType: "image/png", data: "verylongbase64payload" }] },
+  ];
+  const transcript = renderTranscript(messages);
+  assert.match(transcript, /\[image attached: image\/png\]/);
+  assert.doesNotMatch(transcript, /verylongbase64payload/);
 });

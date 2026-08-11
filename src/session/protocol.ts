@@ -13,7 +13,11 @@ import type { Risk } from "../tools/types.js";
 // kept around.
 export type ServerMessage =
   | { type: "history"; messages: ReturnType<Agent["getMessages"]> }
-  | { type: "user_text"; text: string }
+  // Phase 29: images echo the same base64 the client attached, so every
+  // tab sees the same attachment - not just the id/name of some server-
+  // side file, since there isn't one (nothing is written to disk until
+  // Phase 28's chat-history archive picks it up from agent.getMessages()).
+  | { type: "user_text"; text: string; images?: { mediaType: string; data: string }[] }
   | { type: "assistant_text"; text: string }
   | { type: "text_delta"; text: string }
   | { type: "tool_call"; name: string; input: string }
@@ -26,5 +30,10 @@ export type ServerMessage =
 
 // Messages client → server. `input` covers both normal messages and "/"
 // commands - the server dispatches them the same way index.ts does
-// (runCommand first, agent.send if it wasn't a command).
-export type ClientMessage = { type: "input"; line: string } | { type: "confirm_response"; approved: boolean };
+// (runCommand first, agent.send if it wasn't a command). `images` (Phase
+// 29) is optional and only ever meaningful for a non-command `line` - a
+// "/" command ignores it, same as it already ignores everything but the
+// text.
+export type ClientMessage =
+  | { type: "input"; line: string; images?: { mediaType: string; data: string }[] }
+  | { type: "confirm_response"; approved: boolean };

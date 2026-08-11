@@ -11,7 +11,13 @@ export type Role = "user" | "assistant";
 export type Block =
   | { type: "text"; text: string }
   | { type: "tool_use"; toolUseId: string; toolName: string; toolInput: string } // toolInput: raw JSON, pass-through
-  | { type: "tool_result"; toolUseId: string; toolResult: string; isError: boolean };
+  | { type: "tool_result"; toolUseId: string; toolResult: string; isError: boolean }
+  // Phase 29: user-attached images only - neither provider's model ever
+  // emits one back in a Response, the same way neither ever emits
+  // tool_result. `data` is raw base64, no "data:<mediaType>;base64," prefix
+  // (each provider's translation layer adds whatever wrapper its own SDK
+  // needs - see anthropic.ts/openrouter.ts).
+  | { type: "image"; mediaType: string; data: string };
 
 export interface Message {
   role: Role;
