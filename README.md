@@ -522,6 +522,18 @@ Try it: attach a short PDF (report, contract, floor plan) via 📎, and ask for 
 
 Try it: ask the agent to overwrite a file via `write_file`, approve it, then run `/rollback <path>` and confirm the file is back to what it was.
 
+## Phase 32: Command Wrapper Harness
+
+**Key concept:** generalizes the Phase 3 confirm/`requiresConfirmation` gate - a single before-hook baked directly into `agent.ts` - into a reusable before/after wrapping layer any `Tool` can be composed with, without that tool's own implementation ever knowing about it. No Go module to migrate: nothing to port, this is a new abstraction over what already exists.
+
+- `tools/wrap.ts` (new): `ToolPolicy` (`{ name, before?, after? }`) and `wrapTool(tool, policies[])` - every policy's `before()` runs first (array order), then the wrapped tool, then every policy's `after()` (array order, each seeing the previous one's already-transformed result). A `before()` hook's return value is threaded only to *that same policy's* own `after()` - not shared across policies, and not stored in any module-level mutable state - specifically so two sessions calling the same wrapped tool concurrently (`STATIC_CATALOG`'s tool instances are shared across every session) can't cross-correlate their debug log entries.
+- Two ready-made policies, matching the guide's own examples: `truncateOutputPolicy(maxChars)` caps `result.result` regardless of `isError` (a runaway command's giant error dump deserves the same cap as a giant success output), appending a marker noting how much was cut. `logExecutionPolicy(toolName)` records a correlated before/after pair to the Phase 19 debug log under a distinct `"tool-wrapper"` source - deliberately *not* the same `"tool"` source `agent.ts` already logs under, so this reads as an additional, independently inspectable layer instead of a confusing duplicate of it.
+- **Ordering matters, and it's deliberate:** `catalog.ts` wraps `bash` as `wrapTool(bashTool, [logExecutionPolicy("bash"), truncateOutputPolicy(10_000)])` - logging first means the debug log always keeps the *full* output, and truncation (which runs second, seeing the log policy's already-passed-through result) only affects what actually goes back to the model. `bash.ts` itself is untouched, exactly as the guide's practical test asks.
+
+**Verified for real, not just typechecked:** 246 backend tests (9 new for `wrap.ts`, including one that explicitly provokes two concurrent calls to the same wrapped tool and confirms their debug events never cross-correlate). Live smoke test against the real server through OpenRouter: asked the agent to run a real `bash` command printing 15,001 characters - the model's own answer correctly reported the harness had truncated it; `/debug ls` showed both the `tool` source (agent.ts's native logging, 10,034 bytes - the already-truncated result) and the new `tool-wrapper` source side by side; `/debug show` on the wrapper's own response event confirmed its payload held the full, untruncated 15,001-character output - proof the "log first, truncate second" ordering works exactly as designed, not just in theory.
+
+Try it: `/debug on`, ask the agent to run a `bash` command that prints well over 10,000 characters, then `/debug ls` and compare the `tool` and `tool-wrapper` entries for that call.
+
 More phases land here as the project grows — see the commit history for the full progression.
 
 ## License

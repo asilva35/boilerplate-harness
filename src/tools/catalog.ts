@@ -27,11 +27,17 @@ import { rememberTool } from "./remember.js";
 import { ToolRegistry } from "./registry.js";
 import type { Tool } from "./types.js";
 import { writeFileTool } from "./write_file.js";
+import { logExecutionPolicy, truncateOutputPolicy, wrapTool } from "./wrap.js";
 
 const STATIC_CATALOG: Record<string, Tool> = {
   read_file: readFileTool,
   write_file: writeFileTool,
-  bash: bashTool,
+  // Phase 32: wrapped, not modified - bash.ts itself is untouched. Logs
+  // every execution to the debug log first, then caps a runaway command's
+  // output at 10,000 characters before it ever reaches the model (logging
+  // ordered first so the debug log still shows the full output even when
+  // the model-facing result gets cut down - see wrap.ts).
+  bash: wrapTool(bashTool, [logExecutionPolicy("bash"), truncateOutputPolicy(10_000)]),
   estimate_scope: estimateScopeTool,
   // Phase 30: same read-only tier as read_file - text extraction from a
   // PDF already on disk.
